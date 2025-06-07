@@ -1,0 +1,12 @@
+langgraph
+langchain
+langchain-anthropic
+mcp
+pydantic
+fastapi
+uvicorn
+websockets
+aiofiles
+supabase
+python-dotenv
+langgraph-checkpoint

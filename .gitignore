@@ -1,0 +1,73 @@
+# Environment variables
+.env
+config/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Outputs
+outputs/videos/*
+outputs/thumbnails/*
+outputs/analytics/*
+
+# Keep output directories but ignore contents
+!outputs/videos/.gitkeep
+!outputs/thumbnails/.gitkeep
+!outputs/analytics/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Credentials
+credentials/
+*.key
+*.pem
+
+# Cache
+.cache/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# LangGraph
+langraph.db
+*.db

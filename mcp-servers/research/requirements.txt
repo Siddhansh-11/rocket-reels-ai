@@ -1,0 +1,7 @@
+mcp
+aiohttp
+beautifulsoup4
+anthropic
+duckduckgo-search==6.1.12
+pydantic
+lxml
