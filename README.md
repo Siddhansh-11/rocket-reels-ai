@@ -25,6 +25,7 @@ An AI-powered video reel generation system built with Model Context Protocol (MC
 
 1. **Clone and configure**
    ```bash
+   git clone https://github.com/Siddhansh-11/ai-reel-factory-mcp.git
    cd ai-reel-factory-mcp
    
    # Copy environment template
