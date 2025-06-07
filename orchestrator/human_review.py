@@ -18,7 +18,7 @@ class HumanReviewInterface:
         
     def _create_app(self) -> FastAPI:
         """Create FastAPI app for review interface"""
-        app = FastAPI(title="AI Reel Factory - Human Review")
+        app = FastAPI(title="Rocket Reels AI - Human Review")
         
         @app.get("/")
         async def get_review_interface():
@@ -141,7 +141,7 @@ class HumanReviewInterface:
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI Reel Factory - Review Interface</title>
+    <title>Rocket Reels AI - Review Interface</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -215,7 +215,7 @@ class HumanReviewInterface:
 </head>
 <body>
     <div class="container">
-        <h1>AI Reel Factory - Human Review <span class="cost">Cost: $<span id="cost">0.00</span></span></h1>
+        <h1>Rocket Reels AI - Human Review <span class="cost">Cost: $<span id="cost">0.00</span></span></h1>
         
         <div class="phase-info">
             <h2>Current Phase: <span id="phase">Loading...</span></h2>

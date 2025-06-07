@@ -13,7 +13,7 @@ from human_review import HumanReviewInterface
 load_dotenv('../config/.env')
 
 # Initialize FastAPI app
-app = FastAPI(title="AI Reel Factory Orchestrator")
+app = FastAPI(title="Rocket Reels AI Orchestrator")
 
 # Add CORS middleware
 app.add_middleware(
@@ -32,7 +32,7 @@ async def root():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": "AI Reel Factory Orchestrator",
+        "service": "Rocket Reels AI Orchestrator",
         "version": "0.1.0"
     }
 
@@ -105,7 +105,7 @@ async def run_servers():
     )
 
 if __name__ == "__main__":
-    print("🚀 Starting AI Reel Factory Orchestrator...")
+    print("🚀 Starting Rocket Reels AI Orchestrator...")
     print("📝 Human Review Interface: http://localhost:8000")
     print("🔧 API Endpoints: http://localhost:8001")
     print("📊 LangGraph Studio: https://smith.langchain.com/projects")

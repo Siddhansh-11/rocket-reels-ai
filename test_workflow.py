@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for AI Reel Factory workflow
+Test script for Rocket Reels AI workflow
 """
 import asyncio
 import requests
@@ -87,7 +87,7 @@ def test_quick_workflow():
 
 def main():
     """Main test function"""
-    print("🎬 AI Reel Factory - Workflow Test")
+    print("🚀 Rocket Reels AI - Workflow Test")
     print("=" * 50)
     
     if len(sys.argv) > 1:

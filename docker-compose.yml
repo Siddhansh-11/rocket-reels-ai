@@ -10,7 +10,7 @@ services:
     ports:
       - "8081:8080"
     networks:
-      - mcp-network
+      - rocket-reels-network
     volumes:
       - ./outputs:/app/outputs
 
@@ -23,7 +23,7 @@ services:
     ports:
       - "8082:8080"
     networks:
-      - mcp-network
+      - rocket-reels-network
 
   planner:
     build: ./mcp-servers/planner
@@ -34,7 +34,7 @@ services:
     ports:
       - "8083:8080"
     networks:
-      - mcp-network
+      - rocket-reels-network
 
   script:
     build: ./mcp-servers/script
@@ -45,7 +45,7 @@ services:
     ports:
       - "8084:8080"
     networks:
-      - mcp-network
+      - rocket-reels-network
 
   visual:
     build: ./mcp-servers/visual
@@ -56,7 +56,7 @@ services:
     ports:
       - "8085:8080"
     networks:
-      - mcp-network
+      - rocket-reels-network
     volumes:
       - ./outputs:/app/outputs
       - ./credentials:/app/credentials:ro
@@ -84,13 +84,13 @@ services:
       - "8000:8000"  # Human review interface
       - "8001:8001"  # API endpoints
     networks:
-      - mcp-network
+      - rocket-reels-network
     volumes:
       - ./outputs:/app/outputs
       - ./config:/app/config:ro
 
 networks:
-  mcp-network:
+  rocket-reels-network:
     driver: bridge
 
 volumes:

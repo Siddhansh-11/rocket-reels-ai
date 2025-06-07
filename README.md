@@ -1,4 +1,4 @@
-# AI Reel Factory with MCP Architecture
+# Rocket Reels AI 🚀
 
 An AI-powered video reel generation system built with Model Context Protocol (MCP) servers. The system generates 30-60 second educational videos with human review at each phase and full workflow tracing in LangGraph Studio.
 
@@ -25,8 +25,8 @@ An AI-powered video reel generation system built with Model Context Protocol (MC
 
 1. **Clone and configure**
    ```bash
-   git clone https://github.com/Siddhansh-11/ai-reel-factory-mcp.git
-   cd ai-reel-factory-mcp
+   git clone https://github.com/Siddhansh-11/rocket-reels-ai.git
+   cd rocket-reels-ai
    
    # Copy environment template
    cp config/.env.template config/.env
@@ -157,7 +157,7 @@ Each phase includes:
 ## 📁 Project Structure
 
 ```
-ai-reel-factory-mcp/
+rocket-reels-ai/
 ├── mcp-servers/
 │   ├── input/           # Input processing
 │   ├── research/        # Content research

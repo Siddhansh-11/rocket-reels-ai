@@ -1,8 +1,8 @@
 #!/bin/bash
-# AI Reel Factory - Quick Start Script
+# Rocket Reels AI - Quick Start Script
 
-echo "🎬 AI Reel Factory - Starting Services"
-echo "====================================="
+echo "🚀 Rocket Reels AI - Starting Services"
+echo "======================================"
 
 # Check if .env exists
 if [ ! -f "config/.env" ]; then
@@ -45,7 +45,7 @@ echo "🏥 Checking service health..."
 docker-compose ps
 
 echo ""
-echo "✅ AI Reel Factory is running!"
+echo "✅ Rocket Reels AI is running!"
 echo ""
 echo "🌐 Access points:"
 echo "   - Human Review Interface: http://localhost:8000"
