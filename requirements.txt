@@ -4,3 +4,7 @@ langchain-community
 langchain-anthropic
 tavily-python
 gradio
+beautifulsoup4 
+aiohttp 
+Pillow
+chromadb

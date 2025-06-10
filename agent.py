@@ -10,6 +10,8 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from datetime import datetime
 import requests
 import json
+import asyncio
+from enhanced_vector_store import EnhancedNewsVectorStore
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +23,9 @@ llm = ChatAnthropic(
     temperature=0,
     anthropic_api_key=os.getenv("CLAUDE_API_KEY")
 )
+
+# Initialize enhanced vector store
+news_store = EnhancedNewsVectorStore()
 
 # Define custom tools
 def get_current_time() -> str:
@@ -35,96 +40,160 @@ def calculator(expression: str) -> str:
         return f"Error calculating: {str(e)}"
 
 def get_latest_news(query: str = "", category: str = "") -> str:
-    """
-    Get the latest news headlines.
-    Parameters:
-    - query: Search term for specific news (optional)
-    - category: News category like business, entertainment, health, science, sports, technology (optional)
-    """
+    """Enhanced news function with full content extraction and media storage"""
     api_key = os.getenv("NEWSAPI_API_KEY")
     if not api_key:
         return "News API key not found. Please set NEWSAPI_API_KEY in your .env file."
     
-    # Construct the API request
+    # Parse input if it comes as JSON string from agent
+    if query.startswith('{') and query.endswith('}'):
+        try:
+            import json
+            parsed = json.loads(query)
+            category = parsed.get('category', category)
+            query = parsed.get('query', '')
+        except:
+            pass
+    
+    print(f"Debug: Fetching news with query='{query}', category='{category}'")
+    
+    # First check cached articles
+    cached_response = ""
+    if query:
+        cached_results = news_store.search_articles_with_media(query, n_results=3)
+        if cached_results['articles']:
+            cached_response = "📚 Related cached articles:\n\n"
+            for i, article in enumerate(cached_results['articles'][:2], 1):
+                cached_response += f"{i}. {article['content'][:100]}...\n"
+                cached_response += f"   Source: {article['metadata']['source']}\n"
+                cached_response += f"   Media: {len(article['media'])} items\n"
+                cached_response += f"   Relevance: {article['relevance_score']:.2f}\n\n"
+    
+    # Get fresh news from API
     url = "https://newsapi.org/v2/top-headlines"
     params = {
         "apiKey": api_key,
         "language": "en",
-        "pageSize": 5  # Limit to 5 articles for readability
-    }
-    
-    # Add optional parameters if provided
-    if query:
-        params["q"] = query
-    if category and category.lower() in ["business", "entertainment", "general", "health", "science", "sports", "technology"]:
-        params["category"] = category.lower()
-    elif not query:  # Default to general news if no query or category
-        params["category"] = "general"
-    
-    try:
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            news_data = response.json()
-            if news_data["totalResults"] == 0:
-                # Try an alternative approach with everything endpoint for location-based searches
-                return get_location_news(query)
-            
-            # Format the results
-            result = f"Latest News {f'on {query}' if query else ''} {f'in {category}' if category else ''}:\n\n"
-            for i, article in enumerate(news_data["articles"], 1):
-                result += f"{i}. {article['title']}\n"
-                result += f"   Source: {article['source']['name']}\n"
-                result += f"   Published: {article['publishedAt']}\n"
-                result += f"   Summary: {article['description'] if article['description'] else 'No description available'}\n"
-                result += f"   URL: {article['url']}\n\n"
-            
-            return result
-        else:
-            return f"Error fetching news: {response.status_code}"
-    except Exception as e:
-        return f"Error processing news request: {str(e)}"
-
-def get_location_news(location: str) -> str:
-    """
-    Get news for a specific location using the everything endpoint.
-    This is better for location-based searches.
-    """
-    api_key = os.getenv("NEWSAPI_API_KEY")
-    if not api_key:
-        return "News API key not found. Please set NEWSAPI_API_KEY in your .env file."
-    
-    # Use the everything endpoint which is better for location searches
-    url = "https://newsapi.org/v2/everything"
-    params = {
-        "apiKey": api_key,
-        "q": location,  # Search for the location name
-        "sortBy": "publishedAt",  # Sort by most recent
-        "language": "en",
         "pageSize": 5
     }
     
+    if query and query.strip():
+        params["q"] = query
+    if category and category.lower() in ["business", "entertainment", "general", "health", "science", "sports", "technology"]:
+        params["category"] = category.lower()
+    elif not query or not query.strip():
+        params["category"] = "general"
+    
+    print(f"Debug: API request params: {params}")
+    
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
+        print(f"Debug: API response status: {response.status_code}")
+        
         if response.status_code == 200:
             news_data = response.json()
+            print(f"Debug: Found {len(news_data.get('articles', []))} articles")
             
-            if news_data["totalResults"] == 0:
-                return f"No news found for location: {location}. Try a different search term or check back later."
+            if not news_data.get('articles'):
+                return f"No articles found for category '{category}' or query '{query}'. Try a different search term."
             
-            # Format the results
-            result = f"Latest News related to {location}:\n\n"
+            # Process articles asynchronously to fetch full content
+            async def process_articles():
+                tasks = []
+                for article in news_data["articles"]:
+                    if article.get('url'):  # Only process if URL exists
+                        article['category'] = params.get('category', 'general')
+                        tasks.append(news_store.process_and_store_article(article))
+                
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Run the async processing
+            try:
+                asyncio.run(process_articles())
+            except Exception as e:
+                print(f"Error processing articles: {e}")
+            
+            # Format results
+            result = f"📰 Latest News {f'on {query}' if query else ''} {f'in {category}' if category else ''}:\n\n"
             for i, article in enumerate(news_data["articles"], 1):
                 result += f"{i}. {article['title']}\n"
                 result += f"   Source: {article['source']['name']}\n"
                 result += f"   Published: {article['publishedAt']}\n"
                 result += f"   Summary: {article['description'] if article['description'] else 'No description available'}\n"
-                result += f"   URL: {article['url']}\n\n"
+                result += f"   URL: {article['url']}\n"
+                result += f"   📸 Full content and media being processed...\n\n"
+            
+            # Add cached results if available
+            if cached_response:
+                result += "\n" + cached_response
             
             return result
         else:
-            return f"Error fetching location news: {response.status_code}"
+            error_detail = response.text
+            return f"Error fetching news: HTTP {response.status_code}. Details: {error_detail}"
+    except requests.exceptions.Timeout:
+        return "Request timed out. Please try again later."
+    except requests.exceptions.ConnectionError:
+        return "Connection error. Please check your internet connection."
     except Exception as e:
-        return f"Error processing location news request: {str(e)}"
+        return f"Error processing news request: {str(e)}"
+
+def search_cached_news_with_media(query: str) -> str:
+    """Search cached articles with full content and media"""
+    try:
+        results = news_store.search_articles_with_media(query, n_results=5, include_media=True)
+        
+        if not results['articles']:
+            return "No cached articles found matching your query."
+        
+        result = f"🔍 Found {results['total_found']} cached articles for '{query}':\n\n"
+        
+        for i, article in enumerate(results['articles'], 1):
+            metadata = article['metadata']
+            result += f"{i}. Article from {metadata['source']}\n"
+            result += f"   Published: {metadata.get('published_at', 'Unknown')}\n"
+            result += f"   Word Count: {metadata.get('word_count', 0)} words\n"
+            result += f"   Relevance: {article['relevance_score']:.2f}\n"
+            result += f"   Content Preview: {article['content'][:200]}...\n"
+            
+            # Add media information
+            if article['media']:
+                result += f"   🎨 Media ({len(article['media'])} items):\n"
+                for j, media in enumerate(article['media'][:3], 1):  # Show first 3 media items
+                    result += f"     {j}. {media['type'].title()}: {media['alt_text'] or 'No description'}\n"
+                if len(article['media']) > 3:
+                    result += f"     ... and {len(article['media']) - 3} more\n"
+            
+            result += f"   URL: {metadata['url']}\n\n"
+        
+        return result
+        
+    except Exception as e:
+        return f"Error searching cached articles: {str(e)}"
+
+def get_articles_by_source(source_name: str) -> str:
+    """Get articles from a specific news source with media"""
+    try:
+        articles = news_store.get_articles_by_source(source_name, limit=5)
+        
+        if not articles:
+            return f"No articles found from source: {source_name}"
+        
+        result = f"📰 Articles from {source_name}:\n\n"
+        
+        for i, article in enumerate(articles, 1):
+            metadata = article['metadata']
+            result += f"{i}. Published: {metadata.get('published_at', 'Unknown')}\n"
+            result += f"   Words: {metadata.get('word_count', 0)}\n"
+            result += f"   Media: {len(article['media'])} items\n"
+            result += f"   Preview: {article['content'][:150]}...\n"
+            result += f"   URL: {metadata['url']}\n\n"
+        
+        return result
+        
+    except Exception as e:
+        return f"Error getting articles by source: {str(e)}"
 
 # Create Tavily search tool
 tavily_search = TavilySearchResults(
@@ -152,12 +221,17 @@ tools = [
     Tool(
         name="LatestNews",
         func=get_latest_news,
-        description="Get the latest news headlines. You can specify a search query and/or category (business, entertainment, health, science, sports, technology)."
+        description="Get latest news headlines. For technology news, use category='technology'. For other categories use: business, entertainment, health, science, sports. You can also search with a specific query."
     ),
     Tool(
-        name="LocationNews",
-        func=get_location_news,
-        description="Get news for a specific location or city. Input should be the name of the location (e.g., 'Mumbai', 'New York')."
+        name="SearchCachedNews",
+        func=search_cached_news_with_media,
+        description="Search through cached news articles with full content and media. Great for finding detailed information."
+    ),
+    Tool(
+        name="GetArticlesBySource",
+        func=get_articles_by_source,
+        description="Get articles from a specific news source (e.g., 'BBC News', 'CNN', 'Reuters')."
     )
 ]
 
@@ -178,8 +252,19 @@ Observation: the result of the action
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
 
-When asked about general news or news categories, use the LatestNews tool.
-When asked about news in a specific location or city, use the LocationNews tool.
+IMPORTANT: When using LatestNews tool:
+- For technology news, use: technology
+- For business news, use: business
+- For health news, use: health
+- For science news, use: science
+- For sports news, use: sports
+- For entertainment news, use: entertainment
+- For general news, use: general
+
+Examples:
+- User asks for "tech news" -> Action Input: technology
+- User asks for "latest technology" -> Action Input: technology
+- User asks for "AI news" -> Action Input: artificial intelligence
 
 Begin!
 
