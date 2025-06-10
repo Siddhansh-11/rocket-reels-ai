@@ -1,161 +1,209 @@
 import asyncio
 import json
-from typing import Dict, Any, Optional
-import subprocess
-import os
-from dataclasses import dataclass
+import aiohttp
+from typing import Dict, Any, List, Optional
 
-@dataclass
-class MCPServer:
-    """MCP server configuration"""
-    name: str
-    port: int
-    container_name: str
-    
 class MCPClient:
     """Client for communicating with MCP servers"""
     
     def __init__(self):
-        self.servers = {
-            "input-processor": MCPServer("input-processor", 8081, "reel-factory-input"),
-            "research": MCPServer("research", 8082, "reel-factory-research"),
-            "content-planner": MCPServer("content-planner", 8083, "reel-factory-planner"),
-            "script-writer": MCPServer("script-writer", 8084, "reel-factory-script"),
-            "visual-generator": MCPServer("visual-generator", 8085, "reel-factory-visual"),
-            "assembly": MCPServer("assembly", 8086, "reel-factory-assembly"),
-            "export": MCPServer("export", 8087, "reel-factory-export"),
-            "distribution": MCPServer("distribution", 8088, "reel-factory-distribution"),
-            "analytics": MCPServer("analytics", 8089, "reel-factory-analytics"),
+        self.base_urls = {
+            "input-processor": "http://input-processor:8080",
+            "research": "http://research:8080",
+            "planner": "http://planner:8080",
+            "script": "http://script:8080",
+            "visual": "http://visual:8080",
+            "assembly": "http://assembly:8080",
+            "export": "http://export:8080",
+            "distribution": "http://distribution:8080",
+            "analytics": "http://analytics:8080"
         }
-        
-    async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    
+    async def call_tool(self, service: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call a tool on an MCP server"""
-        
-        if server_name not in self.servers:
-            raise ValueError(f"Unknown MCP server: {server_name}")
-        
-        server = self.servers[server_name]
-        
-        # In production, this would use proper MCP protocol
-        # For now, simulating with direct container execution
         try:
-            # Format the command to execute in the container
-            mcp_request = {
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                },
-                "id": 1
-            }
+            base_url = self.base_urls.get(service)
+            if not base_url:
+                raise ValueError(f"Unknown service: {service}")
             
-            # Execute via docker exec (simplified for demo)
-            cmd = [
-                "docker", "exec", server.container_name,
-                "python", "-c",
-                f"import json; print(json.dumps({{'tool': '{tool_name}', 'args': {json.dumps(arguments)}}})"
-            ]
-            
-            # In production, would use proper MCP client library
-            # For now, return mock successful response
-            return self._mock_response(server_name, tool_name, arguments)
+            # Mock implementation - in production, use proper MCP protocol
+            # For now, return mock data based on the tool
+            return await self._mock_tool_call(service, tool_name, arguments)
             
         except Exception as e:
-            return {"error": str(e), "server": server_name, "tool": tool_name}
+            return {"error": f"MCP call failed: {str(e)}"}
     
-    def _mock_response(self, server_name: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate mock responses for testing"""
+    async def _mock_tool_call(self, service: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Mock tool calls for testing"""
+        if service == "input-processor":
+            return {
+                "input_type": arguments.get("input_type", "prompt"),
+                "processed_data": {
+                    "text": arguments.get("prompt", "Sample content"),
+                    "keywords": ["AI", "video", "generation"],
+                    "duration_target": 60
+                },
+                "status": "processed"
+            }
         
-        if server_name == "input-processor":
-            if tool_name == "process_youtube":
-                return {
-                    "type": "youtube",
-                    "title": "Sample YouTube Video",
-                    "transcript": "This is a sample transcript...",
-                    "duration": 300,
-                    "url": arguments.get("url")
-                }
-            elif tool_name == "process_prompt":
-                return {
-                    "type": "prompt",
-                    "topic": arguments.get("prompt", "").split('\n')[0],
-                    "full_prompt": arguments.get("prompt"),
-                    "style": arguments.get("style", "educational")
-                }
-                
-        elif server_name == "research":
+        elif service == "research":
             return {
-                "facts": ["Fact 1", "Fact 2", "Fact 3"],
-                "trends": ["Trend 1", "Trend 2"],
-                "suggested_angle": "Focus on practical applications",
-                "sources": ["source1.com", "source2.com"]
+                "research_data": {
+                    "main_topic": "AI Video Generation",
+                    "key_points": [
+                        "AI is revolutionizing content creation",
+                        "Video content drives 80% more engagement",
+                        "Automated workflows save 90% of time"
+                    ],
+                    "trending_angles": ["efficiency", "automation", "AI tools"],
+                    "sources": ["techcrunch.com", "wired.com", "venturebeat.com"]
+                },
+                "status": "completed"
             }
-            
-        elif server_name == "content-planner":
+        
+        elif service == "planner":
             return {
-                "hook": "Stop scrolling! This will change how you work",
-                "main_points": [
-                    {"point": "Tip 1", "duration": 10},
-                    {"point": "Tip 2", "duration": 10},
-                    {"point": "Tip 3", "duration": 10}
-                ],
-                "cta": "Follow for more productivity tips!",
-                "visual_suggestions": ["Text overlay", "Screen recording", "Animation"]
+                "content_plan": {
+                    "hook": "Stop scrolling! AI just changed video creation forever",
+                    "main_points": [
+                        "Traditional video editing takes hours",
+                        "AI can do it in minutes",
+                        "Here's how it works"
+                    ],
+                    "cta": "Follow for more AI hacks!",
+                    "structure": "Hook → Problem → Solution → Demo → CTA",
+                    "estimated_duration": 45
+                },
+                "visual_suggestions": {
+                    "hook_visual": "attention-grabbing graphic",
+                    "demo_visual": "screen recording",
+                    "cta_visual": "subscribe button"
+                },
+                "status": "completed"
             }
-            
-        elif server_name == "script-writer":
-            if tool_name == "generate_script":
-                return {
-                    "script": "[VISUAL: Hook] Stop scrolling! Here are 5 tips...",
-                    "word_count": 150,
-                    "estimated_duration": 45,
-                    "quality_score": 85
-                }
-            elif tool_name == "validate_script":
-                return {
-                    "hook_strength": 80,
+        
+        elif service == "script":
+            return {
+                "script": """
+[VISUAL: Attention-grabbing hook graphic]
+Stop scrolling! AI just changed video creation FOREVER.
+
+[VISUAL: Problem illustration]
+You're spending HOURS editing videos manually...
+
+[PAUSE]
+
+[VISUAL: AI interface demo]
+While smart creators use AI to do it in MINUTES.
+
+Here's the secret:
+1. Upload your content
+2. AI analyzes and edits
+3. Get professional results instantly
+
+[VISUAL: Before/after comparison]
+Same quality, 90% less time.
+
+[VISUAL: CTA with subscribe button]
+Follow @rocketeels for more AI hacks that'll transform your content game!
+                """.strip(),
+                "validation": {
+                    "hook_strength": 85,
                     "readability_score": 75,
                     "cta_clarity": 90,
-                    "issues": [],
-                    "strengths": ["Strong hook", "Clear CTA"]
-                }
-                
-        elif server_name == "visual-generator":
-            return {
-                "visuals": [
-                    {"type": "title_card", "duration": 3},
-                    {"type": "content", "duration": 40},
-                    {"type": "cta_card", "duration": 5}
-                ],
-                "thumbnail": {"status": "generated", "path": "/outputs/thumbnail.png"}
+                    "estimated_duration": 45
+                },
+                "status": "completed"
             }
         
-        # Default response
-        return {"status": "success", "server": server_name, "tool": tool_name}
-    
-    async def check_server_health(self, server_name: str) -> bool:
-        """Check if an MCP server is healthy"""
-        if server_name not in self.servers:
-            return False
-            
-        # In production, would ping the actual server
-        # For now, always return True
-        return True
-    
-    async def get_server_tools(self, server_name: str) -> list:
-        """Get list of tools available on a server"""
-        if server_name not in self.servers:
-            return []
-            
-        # In production, would query the server
-        # For now, return mock tool lists
-        mock_tools = {
-            "input-processor": ["process_youtube", "process_file", "process_prompt"],
-            "research": ["research_topic", "find_trending_angle", "verify_facts"],
-            "content-planner": ["create_content_plan", "generate_visual_suggestions", "optimize_for_platform"],
-            "script-writer": ["generate_script", "polish_script", "validate_script"],
-            "visual-generator": ["generate_visuals", "create_thumbnail"],
-        }
+        elif service == "visual":
+            return {
+                "generated_visuals": [
+                    {
+                        "type": "hook_graphic",
+                        "description": "Attention-grabbing opener",
+                        "duration": 3,
+                        "file_path": "/mock/hook.jpg"
+                    },
+                    {
+                        "type": "demo_video",
+                        "description": "AI interface demonstration",
+                        "duration": 30,
+                        "file_path": "/mock/demo.mp4"
+                    },
+                    {
+                        "type": "cta_card",
+                        "description": "Call-to-action overlay",
+                        "duration": 5,
+                        "file_path": "/mock/cta.jpg"
+                    }
+                ],
+                "status": "completed"
+            }
         
-        return mock_tools.get(server_name, [])
+        elif service == "assembly":
+            return {
+                "assembly_id": "20250610_123456",
+                "video_path": "/data/exports/assembled/20250610_123456/final_video.mp4",
+                "duration": 45.0,
+                "resolution": "1080x1920",
+                "file_size_mb": 12.5,
+                "status": "completed"
+            }
+        
+        elif service == "export":
+            return {
+                "export_id": "20250610_123456",
+                "exports": [
+                    {
+                        "platform": "instagram",
+                        "file_path": "/data/exports/platform_optimized/instagram_optimized.mp4",
+                        "resolution": "1080x1920",
+                        "file_size_mb": 12.5
+                    },
+                    {
+                        "platform": "tiktok",
+                        "file_path": "/data/exports/platform_optimized/tiktok_optimized.mp4",
+                        "resolution": "1080x1920",
+                        "file_size_mb": 11.8
+                    }
+                ],
+                "status": "completed"
+            }
+        
+        elif service == "distribution":
+            return {
+                "published_videos": [
+                    {
+                        "platform": "instagram",
+                        "video_id": "ig_video_123456",
+                        "status": "published",
+                        "url": "https://instagram.com/p/mock123"
+                    },
+                    {
+                        "platform": "tiktok",
+                        "video_id": "tt_video_123456",
+                        "status": "published",
+                        "url": "https://tiktok.com/@user/video/mock123"
+                    }
+                ],
+                "status": "completed"
+            }
+        
+        elif service == "analytics":
+            return {
+                "metrics": {
+                    "total_views": 15420,
+                    "total_likes": 1250,
+                    "total_comments": 89,
+                    "total_shares": 156,
+                    "engagement_rate": 8.1
+                },
+                "platform_breakdown": {
+                    "instagram": {"views": 8500, "engagement_rate": 7.2},
+                    "tiktok": {"views": 6920, "engagement_rate": 9.4}
+                },
+                "status": "completed"
+            }
+        
+        return {"error": f"Unknown service/tool: {service}/{tool_name}"}

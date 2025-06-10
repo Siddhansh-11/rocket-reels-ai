@@ -1,98 +1,145 @@
-version: '3.8'
-
 services:
-  # MCP Servers
-  input:
-    build: ./mcp-servers/input
-    container_name: reel-factory-input
-    environment:
-      - MCP_SERVER_NAME=input-processor
-    ports:
-      - "8081:8080"
-    networks:
-      - rocket-reels-network
-    volumes:
-      - ./outputs:/app/outputs
-
-  research:
-    build: ./mcp-servers/research
-    container_name: reel-factory-research
-    environment:
-      - MCP_SERVER_NAME=research
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    ports:
-      - "8082:8080"
-    networks:
-      - rocket-reels-network
-
-  planner:
-    build: ./mcp-servers/planner
-    container_name: reel-factory-planner
-    environment:
-      - MCP_SERVER_NAME=content-planner
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    ports:
-      - "8083:8080"
-    networks:
-      - rocket-reels-network
-
-  script:
-    build: ./mcp-servers/script
-    container_name: reel-factory-script
-    environment:
-      - MCP_SERVER_NAME=script-writer
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    ports:
-      - "8084:8080"
-    networks:
-      - rocket-reels-network
-
-  visual:
-    build: ./mcp-servers/visual
-    container_name: reel-factory-visual
-    environment:
-      - MCP_SERVER_NAME=visual-generator
-      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
-    ports:
-      - "8085:8080"
-    networks:
-      - rocket-reels-network
-    volumes:
-      - ./outputs:/app/outputs
-      - ./credentials:/app/credentials:ro
-
-  # Orchestrator with Human Review Interface
+  # Core Infrastructure
   orchestrator:
     build: ./orchestrator
-    container_name: reel-factory-orchestrator
+    ports:
+      - "8000:8000"  # Human review interface
+      - "8001:8001"  # API endpoints
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
     depends_on:
-      - input
+      - input-processor
       - research
       - planner
       - script
       - visual
+      - assembly
+      - export
+      - distribution
+      - analytics
+    networks:
+      - rocket-reels
+
+  # MCP Servers
+  input-processor:
+    build: ./mcp-servers/input
+    ports:
+      - "8081:8080"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
-      - LANGCHAIN_TRACING_V2=true
-      - LANGCHAIN_PROJECT=ai-reel-factory
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_KEY=${SUPABASE_KEY}
-      - COST_LIMIT_PER_REEL=${COST_LIMIT_PER_REEL}
-      - COST_LIMIT_DAILY=${COST_LIMIT_DAILY}
-    ports:
-      - "8000:8000"  # Human review interface
-      - "8001:8001"  # API endpoints
-    networks:
-      - rocket-reels-network
     volumes:
-      - ./outputs:/app/outputs
-      - ./config:/app/config:ro
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  research:
+    build: ./mcp-servers/research
+    ports:
+      - "8082:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - NEWSAPI_API_KEY=${NEWSAPI_API_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  planner:
+    build: ./mcp-servers/planner
+    ports:
+      - "8083:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  script:
+    build: ./mcp-servers/script
+    ports:
+      - "8084:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  visual:
+    build: ./mcp-servers/visual
+    ports:
+      - "8085:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  assembly:
+    build: ./mcp-servers/assembly
+    ports:
+      - "8086:8080"
+    environment:
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  export:
+    build: ./mcp-servers/export
+    ports:
+      - "8087:8080"
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  distribution:
+    build: ./mcp-servers/distribution
+    ports:
+      - "8088:8080"
+    environment:
+      - ARCADE_API_KEY=${ARCADE_API_KEY}
+      - ARCADE_WORKSPACE_ID=${ARCADE_WORKSPACE_ID}
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
+
+  analytics:
+    build: ./mcp-servers/analytics
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./data:/app/data
+      - ./core:/app/core
+    networks:
+      - rocket-reels
 
 networks:
-  rocket-reels-network:
+  rocket-reels:
     driver: bridge
 
 volumes:
-  outputs:
-    driver: local
+  rocket_data:

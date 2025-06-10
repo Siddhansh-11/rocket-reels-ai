@@ -1,7 +1,9 @@
 import asyncio
-from typing import Dict, Any, Optional
-from datetime import datetime
 import json
+import uuid
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timedelta
+import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import uvicorn
@@ -14,6 +16,7 @@ class HumanReviewInterface:
     def __init__(self):
         self.pending_reviews: Dict[str, ContentState] = {}
         self.review_decisions: Dict[str, HumanReview] = {}
+        self.active_connections: Dict[str, WebSocket] = {}
         self.app = self._create_app()
         
     def _create_app(self) -> FastAPI:
@@ -28,6 +31,7 @@ class HumanReviewInterface:
         @app.websocket("/ws/{workflow_id}")
         async def websocket_endpoint(websocket: WebSocket, workflow_id: str):
             await websocket.accept()
+            self.active_connections[workflow_id] = websocket
             
             try:
                 # Send current state to reviewer
@@ -60,6 +64,7 @@ class HumanReviewInterface:
             except WebSocketDisconnect:
                 pass
             finally:
+                del self.active_connections[workflow_id]
                 await websocket.close()
         
         return app

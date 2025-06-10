@@ -9,6 +9,12 @@ from mcp.types import Tool, TextContent
 import yt_dlp
 import aiofiles
 from pathlib import Path
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+import uvicorn
+import threading
+import time
+from datetime import datetime
 
 # Initialize MCP server
 server = Server("input-processor")
@@ -227,15 +233,41 @@ async def process_prompt(prompt: str, style: str = "educational") -> Dict[str, A
         "estimated_focus": "single" if len(prompt.split()) < 20 else "detailed"
     }
 
+# Create FastAPI app for health checks
+health_app = FastAPI()
+
+@health_app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "healthy",
+            "service": "input-processor",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+def run_health_server():
+    """Run health check server in separate thread"""
+    uvicorn.run(health_app, host="0.0.0.0", port=8080)
+
 async def main():
     """Run the MCP server"""
+    # Start health server in background
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    
+    # Give health server time to start
+    time.sleep(1)
+    
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
             write_stream,
             InitializationOptions(
                 server_name="input-processor",
-                server_version="0.1.0",
+                server_version="1.0.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
