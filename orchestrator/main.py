@@ -10,7 +10,7 @@ from langraph_workflow import run_workflow
 from human_review import HumanReviewInterface
 
 # Load environment
-load_dotenv('../config/.env')
+load_dotenv('.env')
 
 # Initialize FastAPI app
 app = FastAPI(title="Rocket Reels AI Orchestrator")

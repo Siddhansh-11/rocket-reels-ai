@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "rocket-reels-ai"
+version = "0.1.0"
+description = "AI-powered video reel generation system"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langgraph = "*"
+langchain = "*"
+langchain-anthropic = "*"
+mcp = "*"
+pydantic = "*"
+fastapi = "*"
+uvicorn = "*"
+websockets = "*"
+aiofiles = "*"
+supabase = "*"
+python-dotenv = "*"
+langgraph-checkpoint = "*"
+yt-dlp = "*"
+duckduckgo-search = "*"
+pillow = "*"
+aiohttp = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

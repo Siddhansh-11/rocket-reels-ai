@@ -1,0 +1,8 @@
+{
+  "python_version": "3.11",
+  "dependencies": ["./orchestrator"],
+  "graphs": {
+    "rocket_reels": "./orchestrator/langraph_workflow.py:app"
+  },
+  "env": ".env"
+}

@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./orchestrator/langraph_workflow.py:app"
+  }
+}
