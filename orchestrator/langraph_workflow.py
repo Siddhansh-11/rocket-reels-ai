@@ -5,8 +5,7 @@ from datetime import datetime
 import uuid
 
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 
 from workflow_state import ContentState, PhaseOutput, PhaseStatus, ReviewStatus
@@ -15,13 +14,21 @@ from human_review import HumanReviewInterface
 from orchestration_agent import run_orchestration_agent
 from langchain_community.chat_models import ChatLiteLLM
 
+# Import crawl and storage functions statically to avoid blocking I/O
+try:
+    from enhanced_crawl_agent import enhanced_crawl_with_media_ocr
+    from enhanced_storage_agent import store_enhanced_article, format_storage_result
+    CRAWL_IMPORTS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Could not import crawl/storage modules: {e}")
+    CRAWL_IMPORTS_AVAILABLE = False
+
 # Load environment
 load_dotenv('.env')
 
 # Initialize components
 mcp_client = MCPClient()
 review_interface = HumanReviewInterface()
-memory = MemorySaver()  # Use SQLite in production
 
 # Initialize DeepSeek model for agent functionality
 deepseek_model = ChatLiteLLM(
@@ -94,6 +101,163 @@ async def process_input(state: ContentState) -> ContentState:
         state.errors.append({"phase": "input_processing", "error": str(e)})
     
     return state
+
+async def crawl_and_store_agent(state: ContentState) -> ContentState:
+    """Crawl article and store in Supabase using enhanced crawl with Mistral OCR"""
+    try:
+        # Check if imports are available
+        if not CRAWL_IMPORTS_AVAILABLE:
+            error_msg = "❌ Crawl and storage modules not available. Please check imports."
+            state.messages.append(AIMessage(content=error_msg))
+            return state
+        
+        # Update phase to crawl mode
+        state.current_phase = "crawl_and_store"
+        
+        # Get the last human message to extract URL
+        last_human_message = None
+        if state.messages:
+            for msg in reversed(state.messages):
+                if (hasattr(msg, 'type') and msg.type == 'human') or msg.__class__.__name__ == 'HumanMessage':
+                    last_human_message = msg.content
+                    break
+        
+        if not last_human_message:
+            error_msg = "No URL found to crawl. Please provide a URL to crawl."
+            state.messages.append(AIMessage(content=error_msg))
+            return state
+        
+        # Extract URL from message
+        import re
+        url = None
+        
+        # Check if it's an article number selection
+        article_match = re.search(r'\b(?:article\s*)?([1-8])\b', last_human_message.lower())
+        if article_match:
+            article_num = int(article_match.group(1))
+            # Find the search results in previous messages
+            for msg in reversed(state.messages):
+                if msg.__class__.__name__ == 'SystemMessage' and 'ARTICLE URLS FOUND:' in msg.content:
+                    # Extract URL by article number
+                    url_lines = msg.content.split('\n')
+                    for line in url_lines:
+                        if line.strip().startswith(f"{article_num}."):
+                            url_match = re.search(r'https?://[^\s]+', line)
+                            if url_match:
+                                url = url_match.group(0).rstrip('.,;)')
+                                break
+                    break
+                    
+                # Also check AIMessage for search results
+                if msg.__class__.__name__ == 'AIMessage' and 'ARTICLE URLS FOUND:' in msg.content:
+                    # Extract URL by article number
+                    url_lines = msg.content.split('\n')
+                    for line in url_lines:
+                        if line.strip().startswith(f"{article_num}."):
+                            url_match = re.search(r'https?://[^\s]+', line)
+                            if url_match:
+                                url = url_match.group(0).rstrip('.,;)')
+                                break
+                    break
+        
+        # If no article number, try direct URL extraction
+        if not url:
+            url_pattern = r'https?://[^\s<>"\'{|}|\\^`\[\]]+'
+            urls = re.findall(url_pattern, last_human_message)
+            if urls:
+                url = urls[0]  # Use first URL found
+        
+        if not url:
+            error_msg = f"No valid URL found. Please specify an article number (1-8) or provide a direct URL."
+            state.messages.append(AIMessage(content=error_msg))
+            return state
+        
+        # Step 1: Enhanced crawl with Mistral OCR
+        print(f"🕷️ Enhanced crawling with Mistral OCR: {url}")
+        article_data = await enhanced_crawl_with_media_ocr(url)
+        
+        # Step 2: Store in Supabase using enhanced storage
+        print(f"🗄️ Storing enhanced article in Supabase...")
+        storage_result_data = await store_enhanced_article(article_data)
+        storage_result = format_storage_result(storage_result_data)
+        
+        # Format comprehensive results
+        ocr_summary = ""
+        if article_data.get("ocr_results"):
+            ocr_summary = f"**🔍 OCR Results:** Processed {len(article_data['ocr_results'])} images with text extraction"
+        
+        media_insights = ""
+        if article_data.get("media_insights"):
+            media_insights = f"**👁️ Media Insights:** {'; '.join(article_data['media_insights'][:3])}"
+        
+        combined_result = f"""✅ **ENHANCED CRAWL AND STORAGE WITH MISTRAL OCR COMPLETED**
+
+**📰 Article Details:**
+- Title: {article_data.get('title', 'No title')[:60]}...
+- Domain: {article_data.get('domain', 'Unknown')}
+- Word Count: {article_data.get('word_count', 0)}
+- Method: {article_data.get('method', 'enhanced_crawl')}
+
+**📄 Content Preview:**
+{article_data.get('content', 'No content')[:300]}...
+
+**🎯 Key Points:**
+{chr(10).join([f"• {point}" for point in article_data.get('key_points', [])[:3]])}
+
+**📷 Media Processing:**
+- Images Found: {len(article_data.get('image_urls', []))}
+{ocr_summary}
+{media_insights}
+
+**📝 Extracted Text from Images:**
+{article_data.get('extracted_text_from_images', 'No text extracted from images')[:200]}...
+
+---
+
+{storage_result}
+
+**🔗 Article URL:** {url}
+**🤖 Enhanced with Mistral AI OCR and content analysis**
+**📊 Ready for script generation and content creation!**"""
+        
+        # Add results to messages for chat visibility
+        state.messages.append(AIMessage(content=combined_result))
+        
+        # Add phase output for tracking
+        output = PhaseOutput(
+            phase_name="crawl_and_store",
+            data={
+                "url": url,
+                "article_data": article_data,
+                "storage_result": storage_result,
+                "enhanced_features": {
+                    "ocr_enabled": bool(article_data.get("ocr_results")),
+                    "images_processed": len(article_data.get("image_urls", [])),
+                    "text_extracted": bool(article_data.get("extracted_text_from_images")),
+                    "mistral_analysis": bool(article_data.get("media_insights"))
+                }
+            },
+            status=PhaseStatus.COMPLETED,
+            cost_usd=0.08  # Higher cost due to Mistral OCR processing
+        )
+        
+        state.add_phase_output("crawl_and_store", output)
+        
+        return state
+        
+    except Exception as e:
+        error_message = f"❌ Error in enhanced crawl and storage: {str(e)}"
+        state.messages.append(AIMessage(content=error_message))
+        
+        output = PhaseOutput(
+            phase_name="crawl_and_store",
+            data={},
+            status=PhaseStatus.FAILED,
+            error=str(e)
+        )
+        state.add_phase_output("crawl_and_store", output)
+        
+        return state
 
 async def research_content(state: ContentState) -> ContentState:
     """Research content using Research MCP server"""
@@ -265,7 +429,7 @@ async def search_content_ideas(state: ContentState) -> ContentState:
         
         # Add search results to messages for chat context
         state.messages.append(HumanMessage(content=f"Search query: {search_query}"))
-        state.messages.append(SystemMessage(content=f"Search results: {search_result}"))
+        state.messages.append(AIMessage(content=f"Search results: {search_result}"))
         
     except Exception as e:
         output = PhaseOutput(
@@ -282,6 +446,9 @@ async def search_content_ideas(state: ContentState) -> ContentState:
 async def search_agent(state: ContentState) -> ContentState:
     """Search agent that handles news and tech queries"""
     try:
+        # Import the search function from search_agent
+        from search_agent import search_tech_news
+        
         # Update phase to search mode
         state.current_phase = "search"
         
@@ -294,75 +461,38 @@ async def search_agent(state: ContentState) -> ContentState:
                     last_human_message = msg.content
                     break
         
-        print(f"DEBUG: Found {len(state.messages)} messages")
-        for i, msg in enumerate(state.messages):
-            print(f"DEBUG: Message {i}: type={getattr(msg, 'type', 'unknown')}, class={msg.__class__.__name__}, content={msg.content[:50]}...")
-        
         if not last_human_message:
             # No message found
             error_msg = f"No human message found to process. Found {len(state.messages)} messages total."
-            state.messages.append(SystemMessage(content=error_msg))
+            state.messages.append(AIMessage(content=error_msg))
             return state
         
-        print(f"DEBUG: Processing message: {last_human_message}")
+        # Use the real search function
+        search_result = await search_tech_news(last_human_message)
         
-        # For now, directly return mock news data to ensure it works
-        from datetime import datetime
-        
-        formatted_results = f"""🚀 **TRENDING TECH NEWS**
-📅 **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
-
-**Top Tech Stories:**
-
-1. **OpenAI Announces GPT-5 with Breakthrough Reasoning**
-🔗 https://techcrunch.com/2024/openai-gpt5
-OpenAI's latest model shows unprecedented reasoning capabilities...
-
-2. **Apple Vision Pro 2 Features Leaked**
-🔗 https://theverge.com/apple-vision-pro-2
-Next-gen AR headset to feature 8K displays and lighter design...
-
-3. **Google's Quantum Breakthrough**
-🔗 https://arstechnica.com/google-quantum
-New quantum processor achieves practical quantum advantage...
-
-4. **Tesla Robotaxi Fleet Launch**
-🔗 https://electrek.co/tesla-robotaxi
-Autonomous taxi service begins in major cities...
-
-5. **Microsoft AI Copilot Updates**
-🔗 https://zdnet.com/microsoft-copilot
-AI coding assistant can now build entire applications...
-
-💡 **Query:** {last_human_message}"""
-        
-        # Add the results to messages
-        state.messages.append(SystemMessage(content=formatted_results))
+        # Add the results to messages for chat visibility
+        # Use AIMessage for assistant responses in chat interface
+        state.messages.append(AIMessage(content=search_result["results"]))
         
         # Add phase output for tracking
         output = PhaseOutput(
             phase_name="search",
             data={
                 "query": last_human_message, 
-                "results": formatted_results,
-                "is_mock": True
+                "results": search_result["results"],
+                "is_mock": search_result.get("is_mock", False)
             },
             status=PhaseStatus.COMPLETED,
-            cost_usd=0.0
+            cost_usd=search_result.get("cost", 0.02)
         )
         
-        print(f"DEBUG: Created phase output with phase_name: {output.phase_name}")
         state.add_phase_output("search", output)
-        print(f"DEBUG: State phases_completed: {state.phases_completed}")
-        
-        print(f"DEBUG: Added search results to state")
         
         return state
         
     except Exception as e:
         error_message = f"❌ Error in search agent: {str(e)}"
-        print(f"DEBUG: Error occurred: {e}")
-        state.messages.append(SystemMessage(content=error_message))
+        state.messages.append(AIMessage(content=error_message))
         
         # Add error phase output
         output = PhaseOutput(
@@ -454,11 +584,51 @@ async def human_review(state: ContentState) -> ContentState:
     
     return state
 
+async def human_select_article(state: ContentState) -> ContentState:
+    """Wait for human to select an article from search results"""
+    # This node simply passes through - the actual selection happens
+    # when the human sends their next message
+    return state
+
+def should_continue_from_search(state: ContentState) -> str:
+    """Determine if we should wait for article selection after search"""
+    # Check if the last search had results with URLs
+    if state.search and state.search.data.get("results"):
+        results = state.search.data["results"]
+        if "ARTICLE URLS FOUND:" in results and "Which article would you like me to crawl" in results:
+            return "human_select_article"
+    return "end"
+
 def should_continue_from_start(state: ContentState) -> str:
     """Determine next step from start"""
-    # Check if this is a chat message (search request)
+    # Check if this is a chat message
     if state.messages and len(state.messages) > 0:
-        # Route to search agent for chat messages
+        last_message = state.messages[-1].content.lower().strip()
+        
+        # Check if previous message contains search results with article URLs
+        has_article_urls = False
+        if len(state.messages) >= 2:
+            prev_message = state.messages[-2].content
+            has_article_urls = "ARTICLE URLS FOUND:" in prev_message
+        
+        # Check for direct article number selection (when previous message had URLs)
+        import re
+        article_match = re.search(r'^([1-8])$', last_message)  # Just a number by itself
+        if article_match and has_article_urls:
+            return "crawl_agent"
+        
+        # Check for crawl commands or article selection with keywords
+        if any(keyword in last_message for keyword in ['crawl', 'scrape', 'extract', 'article']):
+            # Check if it's selecting an article number
+            article_match = re.search(r'\b(?:article\s*)?([1-8])\b', last_message)
+            if article_match or 'http' in last_message:
+                return "crawl_agent"
+        
+        # Check for direct URL
+        if 'http' in last_message:
+            return "crawl_agent"
+        
+        # Route to search agent for other chat messages
         return "search_agent"
     
     # For content creation workflows (prompt, youtube, file)
@@ -496,9 +666,15 @@ def create_workflow() -> StateGraph:
     # Add search agent
     workflow.add_node("search_agent", search_agent)
     
+    # Add crawl and storage agent
+    workflow.add_node("crawl_agent", crawl_and_store_agent)
+    
     # Add human review nodes
     for phase in ["input_processing", "search_content_ideas", "research", "planning", "script_writing", "visual_generation"]:
         workflow.add_node(f"human_review_{phase}", human_review)
+    
+    # Add human-in-the-loop node for search results
+    workflow.add_node("human_select_article", human_select_article)
     
     # Add edges - conditional entry point
     workflow.add_conditional_edges(
@@ -507,6 +683,7 @@ def create_workflow() -> StateGraph:
         {
             "process_input": "process_input",
             "search_agent": "search_agent",
+            "crawl_agent": "crawl_agent",
         }
     )
     
@@ -526,8 +703,27 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("human_review_script_writing", "generate_visuals")
     workflow.add_edge("human_review_visual_generation", END)
     
-    # Add search agent exit
-    workflow.add_edge("search_agent", END)
+    # Search agent now goes to human selection or end
+    workflow.add_conditional_edges(
+        "search_agent",
+        should_continue_from_search,
+        {
+            "human_select_article": "human_select_article",
+            "end": END
+        }
+    )
+    
+    # Human selection waits for next input, then routes appropriately
+    workflow.add_conditional_edges(
+        "human_select_article",
+        lambda state: "end",  # Always end after human selection node
+        {
+            "end": END
+        }
+    )
+    
+    # Add crawl agent exit
+    workflow.add_edge("crawl_agent", END)
     
     return workflow
 

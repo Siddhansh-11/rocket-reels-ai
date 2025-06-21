@@ -12,3 +12,8 @@ supabase
 python-dotenv
 langgraph-checkpoint
 tavily-python
+requests
+beautifulsoup4
+mistralai
+pillow
+httpx

@@ -56,6 +56,7 @@ class ContentState(BaseModel):
     # Phase outputs
     input_processing: Optional[PhaseOutput] = None
     search: Optional[PhaseOutput] = None  # For search agent
+    crawl_and_store: Optional[PhaseOutput] = None  # For crawl and storage agent
     search_content_ideas: Optional[PhaseOutput] = None
     research: Optional[PhaseOutput] = None
     planning: Optional[PhaseOutput] = None
