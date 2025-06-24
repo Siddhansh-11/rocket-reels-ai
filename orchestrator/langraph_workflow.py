@@ -23,6 +23,50 @@ except ImportError as e:
     print(f"⚠️ Could not import crawl/storage modules: {e}")
     CRAWL_IMPORTS_AVAILABLE = False
 
+# Import new agents with individual error handling
+PROMPT_IMAGE_AGENTS_AVAILABLE = False
+SCRIPTING_AGENT_AVAILABLE = False
+CHAT_AGENT_AVAILABLE = False
+
+try:
+    from prompt_generation_agent import prompt_generation_agent
+    from image_generation_agent import image_generation_agent
+    PROMPT_IMAGE_AGENTS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Could not import prompt/image agents: {e}")
+
+try:
+    from scripting_agent import generate_and_store_script, check_scripts_table_access, retrieve_scripts
+    SCRIPTING_AGENT_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Could not import scripting agent: {e}")
+
+try:
+    from chat_agent import run_chat_agent, handle_direct_routing
+    CHAT_AGENT_AVAILABLE = True
+    print("✅ Chat agent imported successfully")
+except ImportError as e:
+    print(f"⚠️ Could not import chat agent: {e}")
+    # Create a fallback function
+    async def run_chat_agent(message):
+        return f"""🤖 **Chat Agent - Fallback Mode**
+
+Your message: "{message}"
+
+**Available Actions:**
+- For search: Try "search [topic]"
+- For crawl: Try "crawl [url]"  
+- For scripts: Try "generate script"
+
+💡 The full chat agent is temporarily unavailable."""
+    
+    def handle_direct_routing(message):
+        return f"""🤖 **Direct Routing - Fallback Mode**
+        
+Your message: "{message}"
+
+Please try specific commands."""
+
 # Load environment
 load_dotenv('.env')
 
@@ -45,6 +89,8 @@ WORKFLOW_PHASES = [
     "research", 
     "planning",
     "script_writing",
+    "prompt_generation",
+    "image_generation",
     "visual_generation",
     "assembly",
     "export",
@@ -359,40 +405,112 @@ async def plan_content(state: ContentState) -> ContentState:
     return state
 
 async def write_script(state: ContentState) -> ContentState:
-    """Generate script using Script MCP server"""
+    """Generate and store script using orchestrator scripting agent"""
     try:
-        plan_data = state.planning.data["content_plan"]
+        if not SCRIPTING_AGENT_AVAILABLE:
+            raise Exception("Scripting agent not available")
         
-        # Generate script
-        script = await mcp_client.call_tool(
-            "script-writer",
-            "generate_script",
-            {
-                "plan": plan_data,
-                "style": "energetic",
-                "template": "educational"
+        # Get the latest crawled article data
+        article_data = None
+        if state.crawl_and_store and state.crawl_and_store.data:
+            article_data = state.crawl_and_store.data.get('article_data')
+        
+        if not article_data:
+            # Fallback to any available content data
+            if state.input_processing and state.input_processing.data:
+                article_data = state.input_processing.data
+            else:
+                raise Exception("No article data available for script generation")
+        
+        # Ensure we have the required fields for script generation
+        if not article_data.get('content'):
+            raise Exception("Article content is required for script generation")
+        
+        # Generate scripts for multiple platforms
+        platforms = ['youtube', 'tiktok', 'instagram']
+        stored_scripts = {}
+        
+        for platform in platforms:
+            script_config = {
+                'platform': platform,
+                'style': 'engaging',
+                'template': 'viral',
+                'duration': 60 if platform == 'youtube' else 30
             }
-        )
+            
+            # Generate and store script
+            result = await generate_and_store_script(article_data, script_config)
+            
+            if result['success']:
+                stored_scripts[platform] = {
+                    'script_id': result['script_id'],
+                    'content_length': result['content_length'],
+                    'created_at': result['created_at']
+                }
         
-        # Validate script
-        validation = await mcp_client.call_tool(
-            "script-writer",
-            "validate_script",
-            {"script": script["script"]}
-        )
+        # Create comprehensive script result
+        script_result = {
+            'stored_scripts': stored_scripts,
+            'total_platforms': len(stored_scripts),
+            'source_article': {
+                'id': article_data.get('id'),
+                'title': article_data.get('title', ''),
+                'url': article_data.get('url', ''),
+                'word_count': article_data.get('word_count', 0)
+            },
+            'generation_metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'platforms_generated': list(stored_scripts.keys()),
+                'stored_in_database': True
+            }
+        }
         
-        script["validation"] = validation
+        # Format result for chat display
+        formatted_result = f"""🎬 **SCRIPTS GENERATED AND STORED IN DATABASE**
+
+**📰 Source Article:**
+- Title: {article_data.get('title', 'Unknown')[:60]}...
+- Word Count: {article_data.get('word_count', 0)}
+
+**📱 PLATFORM SCRIPTS STORED:**
+
+"""
+        
+        for platform, script_info in stored_scripts.items():
+            formatted_result += f"""✅ **{platform.upper()} SCRIPT**
+- Script ID: {script_info['script_id'][:8]}...
+- Content Length: {script_info['content_length']} characters
+- Created: {script_info['created_at']}
+
+"""
+        
+        formatted_result += f"""
+**🗄️ Database Status:** All scripts stored in Supabase scripts table
+**⏰ Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+**📊 Ready for next phase!**
+"""
+        
+        # Add results to messages for chat visibility
+        state.messages.append(AIMessage(content=formatted_result))
         
         output = PhaseOutput(
             phase_name="script_writing",
-            data=script,
+            data=script_result,
             status=PhaseStatus.COMPLETED,
-            cost_usd=0.10  # Higher cost for creative generation
+            cost_usd=0.10
         )
         state.add_phase_output("script_writing", output)
-        state.current_phase = "visual_generation"
+        
+        # Set next phase based on availability
+        if PROMPT_IMAGE_AGENTS_AVAILABLE:
+            state.current_phase = "prompt_generation"
+        else:
+            state.current_phase = "visual_generation"
         
     except Exception as e:
+        error_message = f"❌ Error generating scripts: {str(e)}"
+        state.messages.append(AIMessage(content=error_message))
+        
         output = PhaseOutput(
             phase_name="script_writing",
             data={},
@@ -403,6 +521,54 @@ async def write_script(state: ContentState) -> ContentState:
         state.errors.append({"phase": "script_writing", "error": str(e)})
     
     return state
+
+async def script_generation_agent(state: ContentState) -> ContentState:
+    """Generate viral scripts from crawled article data"""
+    try:
+        # Update phase to script generation mode
+        state.current_phase = "script_generation"
+        
+        # Get the last human message to see if they want script generation
+        last_human_message = None
+        if state.messages:
+            for msg in reversed(state.messages):
+                if (hasattr(msg, 'type') and msg.type == 'human') or msg.__class__.__name__ == 'HumanMessage':
+                    last_human_message = msg.content
+                    break
+        
+        if not last_human_message:
+            error_msg = "No request found for script generation."
+            state.messages.append(AIMessage(content=error_msg))
+            return state
+        
+        # Check if we have crawled article data
+        article_data = None
+        if state.crawl_and_store and state.crawl_and_store.data:
+            article_data = state.crawl_and_store.data.get('article_data')
+        
+        if not article_data or not article_data.get('content'):
+            error_msg = "❌ No crawled article data available. Please crawl an article first before generating scripts."
+            state.messages.append(AIMessage(content=error_msg))
+            return state
+        
+        # Call the write_script function to generate scripts
+        script_state = await write_script(state)
+        
+        return script_state
+        
+    except Exception as e:
+        error_message = f"❌ Error in script generation agent: {str(e)}"
+        state.messages.append(AIMessage(content=error_message))
+        
+        output = PhaseOutput(
+            phase_name="script_generation",
+            data={},
+            status=PhaseStatus.FAILED,
+            error=str(e)
+        )
+        state.add_phase_output("script_generation", output)
+        
+        return state
 
 async def search_content_ideas(state: ContentState) -> ContentState:
     """Search for trending content ideas using the orchestration agent"""
@@ -584,71 +750,48 @@ async def human_review(state: ContentState) -> ContentState:
     
     return state
 
-async def human_select_article(state: ContentState) -> ContentState:
-    """Wait for human to select an article from search results"""
-    # This node simply passes through - the actual selection happens
-    # when the human sends their next message
-    return state
 
-def should_continue_from_search(state: ContentState) -> str:
-    """Determine if we should wait for article selection after search"""
-    # Check if the last search had results with URLs
-    if state.search and state.search.data.get("results"):
-        results = state.search.data["results"]
-        if "ARTICLE URLS FOUND:" in results and "Which article would you like me to crawl" in results:
-            return "human_select_article"
-    return "end"
+
+async def chat_agent(state: ContentState) -> ContentState:
+    """Main chat agent that handles all user interactions"""
+    try:
+# Always try to process the message, even in fallback mode
+        
+        # Get the last human message
+        last_human_message = None
+        if state.messages:
+            for msg in reversed(state.messages):
+                if (hasattr(msg, 'type') and msg.type == 'human') or msg.__class__.__name__ == 'HumanMessage':
+                    last_human_message = msg.content
+                    break
+        
+        if not last_human_message:
+            state.messages.append(AIMessage(content="No message found to process."))
+            return state
+        
+        # Run the chat agent (async)
+        response = await run_chat_agent(last_human_message)
+        
+        # Add response to messages
+        state.messages.append(AIMessage(content=response))
+        
+        return state
+        
+    except Exception as e:
+        error_msg = f"❌ Error in chat agent: {str(e)}"
+        state.messages.append(AIMessage(content=error_msg))
+        return state
 
 def should_continue_from_start(state: ContentState) -> str:
-    """Determine next step from start"""
+    """Route all chat messages to the main chat agent"""
     # Check if this is a chat message
     if state.messages and len(state.messages) > 0:
-        last_message = state.messages[-1].content.lower().strip()
-        
-        # Check if previous message contains search results with article URLs
-        has_article_urls = False
-        if len(state.messages) >= 2:
-            prev_message = state.messages[-2].content
-            has_article_urls = "ARTICLE URLS FOUND:" in prev_message
-        
-        # Check for direct article number selection (when previous message had URLs)
-        import re
-        article_match = re.search(r'^([1-8])$', last_message)  # Just a number by itself
-        if article_match and has_article_urls:
-            return "crawl_agent"
-        
-        # Check for crawl commands or article selection with keywords
-        if any(keyword in last_message for keyword in ['crawl', 'scrape', 'extract', 'article']):
-            # Check if it's selecting an article number
-            article_match = re.search(r'\b(?:article\s*)?([1-8])\b', last_message)
-            if article_match or 'http' in last_message:
-                return "crawl_agent"
-        
-        # Check for direct URL
-        if 'http' in last_message:
-            return "crawl_agent"
-        
-        # Route to search agent for other chat messages
-        return "search_agent"
+        return "chat_agent"
     
     # For content creation workflows (prompt, youtube, file)
     return "process_input"
 
-def should_continue_from_chat(state: ContentState) -> str:
-    """Determine next step from chat agent"""
-    # Check if we should exit the chat
-    if state.messages:
-        last_message = state.messages[-1].content.lower()
-        exit_keywords = ['exit', 'quit', 'done', 'stop', 'bye', 'goodbye']
-        if any(keyword in last_message for keyword in exit_keywords):
-            return "end"
-    
-    # Check message count to prevent infinite loops
-    if len(state.messages) > 50:  # Safety limit
-        return "end"
-    
-    # Continue chatting
-    return "chat_agent"
+
 
 # Build the workflow graph
 def create_workflow() -> StateGraph:
@@ -661,30 +804,43 @@ def create_workflow() -> StateGraph:
     workflow.add_node("research_content", research_content)
     workflow.add_node("plan_content", plan_content)
     workflow.add_node("write_script", write_script)
+    
+    # Add prompt and image generation nodes if available
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        workflow.add_node("prompt_generation", prompt_generation_agent)
+        workflow.add_node("image_generation", image_generation_agent)
+    
     workflow.add_node("generate_visuals", generate_visuals)
     
-    # Add search agent
-    workflow.add_node("search_agent", search_agent)
     
-    # Add crawl and storage agent
-    workflow.add_node("crawl_agent", crawl_and_store_agent)
+    # Add main chat agent
+    workflow.add_node("chat_agent", chat_agent)
     
     # Add human review nodes
-    for phase in ["input_processing", "search_content_ideas", "research", "planning", "script_writing", "visual_generation"]:
+    review_phases = ["input_processing", "search_content_ideas", "research", "planning", "script_writing", "visual_generation"]
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        # Insert prompt and image generation phases before visual_generation
+        review_phases.insert(-1, "prompt_generation")
+        review_phases.insert(-1, "image_generation")
+    
+    for phase in review_phases:
         workflow.add_node(f"human_review_{phase}", human_review)
     
-    # Add human-in-the-loop node for search results
-    workflow.add_node("human_select_article", human_select_article)
     
     # Add edges - conditional entry point
+    start_routes = {
+        "process_input": "process_input",
+        "chat_agent": "chat_agent",
+    }
+    
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        start_routes["prompt_generation"] = "prompt_generation"
+        start_routes["image_generation"] = "image_generation"
+    
     workflow.add_conditional_edges(
         "__start__",
         should_continue_from_start,
-        {
-            "process_input": "process_input",
-            "search_agent": "search_agent",
-            "crawl_agent": "crawl_agent",
-        }
+        start_routes
     )
     
     # Connect phases to their review nodes
@@ -693,6 +849,11 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("research_content", "human_review_research")
     workflow.add_edge("plan_content", "human_review_planning")
     workflow.add_edge("write_script", "human_review_script_writing")
+    
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        workflow.add_edge("prompt_generation", "human_review_prompt_generation")
+        workflow.add_edge("image_generation", "human_review_image_generation")
+    
     workflow.add_edge("generate_visuals", "human_review_visual_generation")
     
     # Add simple progression for now
@@ -700,30 +861,18 @@ def create_workflow() -> StateGraph:
     workflow.add_edge("human_review_search_content_ideas", "research_content")
     workflow.add_edge("human_review_research", "plan_content")
     workflow.add_edge("human_review_planning", "write_script")
-    workflow.add_edge("human_review_script_writing", "generate_visuals")
+    
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        workflow.add_edge("human_review_script_writing", "prompt_generation")
+        workflow.add_edge("human_review_prompt_generation", "image_generation")
+        workflow.add_edge("human_review_image_generation", "generate_visuals")
+    else:
+        workflow.add_edge("human_review_script_writing", "generate_visuals")
+    
     workflow.add_edge("human_review_visual_generation", END)
     
-    # Search agent now goes to human selection or end
-    workflow.add_conditional_edges(
-        "search_agent",
-        should_continue_from_search,
-        {
-            "human_select_article": "human_select_article",
-            "end": END
-        }
-    )
-    
-    # Human selection waits for next input, then routes appropriately
-    workflow.add_conditional_edges(
-        "human_select_article",
-        lambda state: "end",  # Always end after human selection node
-        {
-            "end": END
-        }
-    )
-    
-    # Add crawl agent exit
-    workflow.add_edge("crawl_agent", END)
+    # Add chat agent exit
+    workflow.add_edge("chat_agent", END)
     
     return workflow
 

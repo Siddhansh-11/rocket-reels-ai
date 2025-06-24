@@ -7,11 +7,14 @@ import asyncio
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from typing import Dict, List, Any, Optional, Union
 
 # Import agent tools
 from search_agent import search_tools
 from crawl_agent import crawl_tools
-from supabase_agent import supabase_tools_sync_wrapped  # Remove the non-existent imports
+from supabase_agent import supabase_tools_sync_wrapped
+from prompt_generation_agent import prompt_generation_tools
+from image_generation_agent import image_generation_tools
 
 # Load environment variables
 load_dotenv("../.env")
@@ -26,7 +29,7 @@ model = ChatLiteLLM(
     temperature=0.1
 )
 
-# Enhanced system prompt with error handling guardrails
+# Enhanced system prompt with updated guardrails and image generation guidance
 SYSTEM_PROMPT = f"""
 You are Rocket Reels AI News Research Assistant - a specialized agent for discovering, analyzing, and storing trending technology news, including images for social media content.
 
@@ -53,6 +56,7 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 - Creates unique records with URL hashing to prevent duplicates
 - Indexes content for fast retrieval and searching
 - Maintains article metadata, word counts, timestamps, and image URLs
+- Stores and retrieves scripts with full metadata and approval workflow
 - Enables content persistence and future analysis
 
 🎬 **SCRIPTING AGENT FUNCTION:**
@@ -60,6 +64,23 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 - Creates platform-specific content (YouTube, TikTok, Instagram, LinkedIn)
 - Uses proven viral content templates and hooks
 - Optimizes script length and style for maximum engagement
+
+🎨 **PROMPT GENERATION FUNCTION:**
+- Generates detailed image prompts for different scenes in scripts
+- Creates scene-specific visual descriptions with timing information
+- Provides mood, style, and technical specifications for AI image generation
+- Stores prompts in database for organized content creation workflow
+
+🖼️ **IMAGE GENERATION FUNCTION:**
+- **ALWAYS uses Together AI FLUX API as the PRIMARY and ONLY method for initial attempts**
+- **EXPLICITLY calls generate_image_flux() with the correct model parameter "black-forest-labs/FLUX.1-schnell-Free"**
+- Creates visual content using detailed prompts optimized for social media reels
+- Supports multiple aspect ratios (16:9, 9:16) based on target platform requirements
+- For failures, implements THREE retry strategies before suggesting alternatives:
+  1. RETRY with simplified prompt (removing complex elements)
+  2. RETRY with smaller image dimensions (512x512)
+  3. RETRY with alternative formatting of the prompt
+- Manual alternatives (DALL-E, Canva, Leonardo.AI) are STRICTLY last resort options
 
 📋 **WORKFLOW PROCESS:**
 
@@ -96,6 +117,20 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 12. Create engaging hooks, structured content, and clear CTAs
 13. Optimize for platform-specific requirements and timing
 
+**PHASE 5 - PROMPT GENERATION:**
+14. After script generation, offer to create image prompts
+15. Use generate_prompts_from_script() to create scene-specific prompts
+16. Generate detailed visual descriptions with timing and style information
+17. Store prompts in database for organized content creation
+
+**PHASE 6 - IMAGE GENERATION:**
+18. ALWAYS generate images using Together AI FLUX API as your first choice
+19. Use generate_image_flux() function with the model parameter "black-forest-labs/FLUX.1-schnell-Free"
+20. If generation fails, retry with a simplified version of the prompt
+21. After 2-3 failed attempts with Together AI, only then offer manual alternatives:
+    - Provide the prompts for use with DALL-E, Canva, or Leonardo.AI
+    - Explain which tool would work best for each prompt
+
 🎯 **SPECIAL CAPABILITIES:**
 
 **DATABASE RETRIEVAL:**
@@ -103,12 +138,45 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 - Use get_stored_article_by_keyword() to find articles in database
 - Perfect for generating scripts from already processed content
 
+**SCRIPT MANAGEMENT:**
+- Retrieve all scripts with retrieve_stored_scripts()
+- Get specific scripts by ID with get_script_by_id()
+- Get scripts for specific articles with get_scripts_by_article_id()
+- Full script approval workflow with approve_script()
+
 **INSTAGRAM REEL SCRIPTS:**
 - When asked to generate Instagram reel scripts, first retrieve the article from database
 - Then use generate_viral_script() with platform="instagram"
 - Optimize for 30-60 second duration with engaging hooks
 
+**PROMPT & IMAGE MANAGEMENT:**
+- Use check_image_generation_status() to verify service availability
+- If automatic generation fails, provide clear manual alternatives:
+  - Offer specific prompts formatted for different tools
+  - Guide users with step-by-step manual image creation instructions
+  - Recommend appropriate tools based on image needs
+
+**VISUAL TIMING INTEGRATION:**
+- After generating a script, create a visual timing plan with generate_visual_timing()
+- Extract visual cues with extract_visual_cues_from_timing()
+- Generate images for key scenes with generate_from_visual_timing()
+- Present a comprehensive visual and script package
+
 ⚠️ **CRITICAL ERROR HANDLING GUARDRAILS:**
+
+**IMAGE GENERATION FAILURES:**
+1. When image generation fails with Together AI:
+   - FIRST try adjusting the prompt to be simpler and retry
+   - SECOND try with different dimensions (512x512)
+   - THIRD check API key validity and connection issues
+2. Only after these three attempts, suggest manual alternatives:
+   - **DALL-E 3 via ChatGPT**: For high-quality artistic images
+   - **Canva AI**: For more design-oriented visuals
+   - **Leonardo.AI**: For more photorealistic content
+3. Format prompts specifically for manual use:
+   - "Professional cinematic shot of [scene description], high-quality, detailed lighting"
+4. NEVER proceed silently after an image generation failure
+5. Present options clearly and ask users which approach they prefer
 
 **DATABASE RETRIEVAL FAILURES:**
 1. **ALWAYS inform the user immediately when database retrieval fails**
@@ -123,55 +191,21 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 
 **ERROR RESPONSE TEMPLATE:**
 When database retrieval fails, respond with:
+"I encountered an issue while trying to retrieve data from the database: [specific error].
 
-"❌ **DATABASE RETRIEVAL FAILED**
+Here are your options:
+1. Search for new articles on this topic
+2. Try different keywords for database search
+3. Enter a specific URL you want to analyze
+4. Browse all available articles
 
-**What happened:** [Explain the error in simple terms]
-
-**What we can do next:**
-1. 🔍 **Search for new articles** about [topic] 
-2. 📋 **Browse existing articles** in the database
-3. 🔗 **Provide a specific URL** if you have one
-4. 🔄 **Try different keywords** for database search
-
-**What would you like me to do?** Please let me know your preference."
-
-**TOOL USAGE RULES:**
-- For keyword searches in database: Use `get_stored_article_by_keyword()`
-- For browsing all articles: Use `retrieve_stored_articles()`
-- For specific URL retrieval: Use `get_article_by_url()`
-- ALWAYS handle tool failures gracefully with user communication
-
-🎯 **SUCCESS CRITERIA:**
-- Articles must be TRENDING and recent (within last 7 days preferred)
-- Content should be suitable for social media content creation, including images
-- Focus on technology, AI, startups, and innovation news
-- Ensure high engagement potential for video and image-based content
-- All content automatically stored for future reference
-- Complete end-to-end workflow from discovery to production-ready content
-- Wait for explicit user selection before crawling
-- **ALWAYS communicate errors clearly to users**
-
-⚠️ **CRITICAL RULES:**
-- NEVER crawl articles without user selection
-- ALWAYS present search results first
-- ALWAYS wait for human input before proceeding to crawl phase
-- AUTOMATICALLY store all crawled content and images in database
-- Focus on trending, shareable tech content with visual appeal
-- Prioritize quality sources over quantity
-- Generate both script and visual timing for complete content creation
-- **IMMEDIATELY inform users of any errors and ask for guidance**
-
-🚀 **YOUR MISSION:**
-Help users discover trending tech news, extract full content and images, automatically store everything, generate viral scripts, and create detailed visual production plans for engaging social media content.
-
-**When errors occur, be transparent, helpful, and always ask the user how they want to proceed.**
+How would you like to proceed?"
 
 Ready to find and transform the next viral tech story into production-ready content?
 """
 
 # Combine all available tools
-all_tools = search_tools + crawl_tools + supabase_tools_sync_wrapped
+all_tools = search_tools + crawl_tools + supabase_tools_sync_wrapped + prompt_generation_tools + image_generation_tools
 
 # Create the agent with comprehensive tools
 agent = create_react_agent(
@@ -183,211 +217,340 @@ agent = create_react_agent(
 # Debug and validation functions
 def debug_article_data(article_data: dict, stage: str):
     """Debug function to print article data at different stages."""
-    print(f"\n🔍 DEBUG - {stage}:")
-    print(f"   Keys: {list(article_data.keys()) if isinstance(article_data, dict) else 'Not a dict'}")
-    if isinstance(article_data, dict):
-        print(f"   URL: {article_data.get('url', 'MISSING')}")
-        print(f"   Title: {article_data.get('title', 'MISSING')[:50]}..." if article_data.get('title') else "   Title: MISSING")
-        print(f"   Content length: {len(article_data.get('content', ''))}")
+    print(f"\n🔍 DEBUG: Article data at {stage}")
+    print(f"  Title: {article_data.get('title', 'No title')[:50]}...")
+    print(f"  Content length: {len(article_data.get('content', ''))}")
+    print(f"  Word count: {article_data.get('word_count', 0)}")
+    print(f"  Image URLs: {len(article_data.get('image_urls', []))}")
 
 def safe_json_parse(json_str: str) -> dict:
     """Safely parse JSON string with error handling."""
     try:
+        if not json_str:
+            return {}
         return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parsing error: {str(e)}")
+    except json.JSONDecodeError:
+        print(f"❌ Error parsing JSON: {json_str[:100]}...")
         return {}
 
 def extract_structured_data(result_text: str) -> dict:
     """Extract structured data from crawl agent result."""
-    if "STRUCTURED DATA" in result_text:
-        try:
-            # Find JSON block
-            json_start = result_text.find('```json\n') + 8
-            json_end = result_text.find('\n```', json_start)
-            json_data = result_text[json_start:json_end]
-            
-            # Try to parse JSON
-            parsed_data = safe_json_parse(json_data)
-            if parsed_data:
-                return parsed_data
-            
-            # If parsing fails, try to extract manually
-            print("⚠️ JSON parsing failed, extracting data manually...")
-            return extract_data_manually(result_text)
-            
-        except Exception as e:
-            print(f"❌ Error extracting structured data: {str(e)}")
-            return extract_data_manually(result_text)
+    # Check if result is already JSON
+    try:
+        # Try to parse as JSON first
+        result = json.loads(result_text)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
     
+    # Look for JSON block in the text
+    import re
+    json_matches = re.findall(r'```json\n(.*?)\n```', result_text, re.DOTALL)
+    
+    if json_matches:
+        try:
+            return json.loads(json_matches[0])
+        except json.JSONDecodeError:
+            pass
+            
+    # Fall back to manual extraction
     return extract_data_manually(result_text)
 
 def extract_data_manually(result_text: str) -> dict:
     """Manually extract data from result text as fallback."""
-    data = {}
-    
-    # Try to extract URL from the result text (improved regex)
     import re
-    url_patterns = [
-        r'https?://[^\s\)\]]+',  # Standard URL pattern
-        r'URL:\s*(https?://[^\s\)\]]+)',  # URL with label
-        r'\*\*URL:\*\*\s*(https?://[^\s\)\]]+)',  # Markdown URL
-        r'🔗\s*URL:\s*(https?://[^\s\)\]]+)'  # Emoji URL
-    ]
     
-    for pattern in url_patterns:
-        url_match = re.search(pattern, result_text)
-        if url_match:
-            if pattern.startswith('https'):
-                data['url'] = url_match.group(0)
-            else:
-                data['url'] = url_match.group(1)
-            break
+    # Initialize empty data structure
+    article_data = {
+        'title': '',
+        'content': '',
+        'domain': '',
+        'url': '',
+        'word_count': 0,
+        'image_urls': []
+    }
     
-    # Extract title (improved)
-    title_patterns = [
-        r'\*\*📰 Title:\*\*\s*([^\n]+)',
-        r'\*\*Title:\*\*\s*([^\n]+)',
-        r'Title:\s*([^\n]+)',
-        r'# ([^\n]+)'  # Markdown header
-    ]
+    # Extract title
+    title_match = re.search(r'Title:\s+(.*?)(?:\n|$)', result_text)
+    if title_match:
+        article_data['title'] = title_match.group(1).strip()
     
-    for pattern in title_patterns:
-        title_match = re.search(pattern, result_text)
-        if title_match:
-            data['title'] = title_match.group(1).strip()
-            break
+    # Extract domain
+    domain_match = re.search(r'Source:\s+(.*?)(?:\n|$)', result_text)
+    if domain_match:
+        article_data['domain'] = domain_match.group(1).strip()
     
-    # Extract domain (improved)
-    domain_patterns = [
-        r'\*\*🌐 Domain:\*\*\s*([^\n]+)',
-        r'\*\*Domain:\*\*\s*([^\n]+)',
-        r'Domain:\s*([^\n]+)'
-    ]
+    # Extract URL
+    url_match = re.search(r'URL:\s+(https?://.*?)(?:\n|$)', result_text)
+    if url_match:
+        article_data['url'] = url_match.group(1).strip()
     
-    for pattern in domain_patterns:
-        domain_match = re.search(pattern, result_text)
-        if domain_match:
-            data['domain'] = domain_match.group(1).strip()
-            break
+    # Extract content
+    content_match = re.search(r'Content:\s+(.*?)(?:Image URLs:|$)', result_text, re.DOTALL)
+    if content_match:
+        article_data['content'] = content_match.group(1).strip()
+        article_data['word_count'] = len(article_data['content'].split())
     
-    # If no domain found, extract from URL
-    if not data.get('domain') and data.get('url'):
-        from urllib.parse import urlparse
-        try:
-            parsed_url = urlparse(data['url'])
-            data['domain'] = parsed_url.netlnetloc
-        except:
-            data['domain'] = 'unknown.com'
+    # Extract image URLs
+    image_urls_section = re.search(r'Image URLs:\s+(.*?)(?:\n\n|$)', result_text, re.DOTALL)
+    if image_urls_section:
+        image_urls_text = image_urls_section.group(1)
+        urls = re.findall(r'(https?://[^\s]+)', image_urls_text)
+        article_data['image_urls'] = urls
     
-    # Extract word count
-    word_patterns = [
-        r'(\d+)\s+words',
-        r'Word Count:\s*(\d+)',
-        r'\*\*Word Count:\*\*\s*(\d+)'
-    ]
-    
-    for pattern in word_patterns:
-        word_match = re.search(pattern, result_text)
-        if word_match:
-            data['word_count'] = int(word_match.group(1))
-            break
-    
-    # Extract content (improved)
-    content_patterns = [
-        r'\*\*📄 FULL ARTICLE CONTENT:\*\*\s*\n(.*?)(?=\*\*🖼️|\*\*🗄️|$)',
-        r'\*\*FULL ARTICLE CONTENT:\*\*\s*\n(.*?)(?=\*\*|$)',
-        r'CONTENT:\s*\n(.*?)(?=\*\*|$)',
-        r'Content:\s*\n(.*?)(?=\*\*|$)'
-    ]
-    
-    for pattern in content_patterns:
-        content_match = re.search(pattern, result_text, re.DOTALL)
-        if content_match:
-            data['content'] = content_match.group(1).strip()
-            break
-    
-    # If no content found using patterns, take a larger chunk
-    if not data.get('content'):
-        # Look for any substantial text block
-        lines = result_text.split('\n')
-        content_lines = []
-        capturing = False
-        
-        for line in lines:
-            # Start capturing after content headers
-            if any(keyword in line.lower() for keyword in ['content:', 'article content', 'full article']):
-                capturing = True
-                continue
-            
-            # Stop at certain markers
-            if capturing and any(marker in line for marker in ['**🖼️', '**🗄️', '```', '---']):
-                break
-            
-            # Collect content lines
-            if capturing and line.strip() and not line.startswith('**') and not line.startswith('#'):
-                content_lines.append(line.strip())
-        
-        if content_lines:
-            data['content'] = '\n'.join(content_lines)
-    
-    # Extract image URLs (improved)
-    image_patterns = [
-        r'- (https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp))',
-        r'Image:\s*(https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp))',
-        r'\*\*(https?://[^\s]+\.(?:jpg|jpeg|png|gif|webp))\*\*'
-    ]
-    
-    image_urls = []
-    for pattern in image_patterns:
-        image_urls.extend(re.findall(pattern, result_text, re.IGNORECASE))
-    
-    data['image_urls'] = list(set(image_urls))  # Remove duplicates
-    
-    # Set robust defaults for required fields
-    data.setdefault('url', 'https://unknown.com/article')
-    data.setdefault('title', 'Extracted Article Title')
-    data.setdefault('content', result_text[:1000] if len(result_text) > 100 else 'Content extraction incomplete')
-    data.setdefault('domain', 'unknown.com')
-    data.setdefault('word_count', len(data.get('content', '').split()))
-    data.setdefault('image_urls', [])
-    data.setdefault('image_metadata', {})
-    data.setdefault('metadata', {})
-    
-    return data
+    return article_data
 
 def parse_human_selection(user_input: str, last_ai_message: str) -> list:
     """Parse human selection and extract URLs to crawl."""
-    urls_to_crawl = []
-    
-    # Extract URLs from the last AI message (search results)
     import re
-    urls_in_message = re.findall(r'https?://[^\s\)]+', last_ai_message)
     
-    # Parse user selection
-    user_input_lower = user_input.lower().strip()
+    # Check if input contains a URL directly
+    urls = re.findall(r'(https?://[^\s]+)', user_input)
+    if urls:
+        return urls
+        
+    # Look for numeric selection
+    numbers = re.findall(r'\d+', user_input)
     
-    # Check for direct URL input
-    if user_input.startswith('http'):
-        urls_to_crawl.append(user_input)
-        return urls_to_crawl
-    
-    # Check for number selections
-    numbers = re.findall(r'\b(\d+)\b', user_input)
+    # If we have numbers, try to find URLs in the last AI message
     if numbers:
-        for num_str in numbers:
+        # Extract all URLs from the last AI message
+        all_urls = re.findall(r'(https?://[^\s]+)', last_ai_message)
+        
+        selected_urls = []
+        for num in numbers:
             try:
-                index = int(num_str) - 1  # Convert to 0-based index
-                if 0 <= index < len(urls_in_message):
-                    urls_to_crawl.append(urls_in_message[index])
-            except (ValueError, IndexError):
+                idx = int(num) - 1  # Convert to 0-indexed
+                if 0 <= idx < len(all_urls):
+                    selected_urls.append(all_urls[idx])
+            except ValueError:
                 continue
+                
+        return selected_urls
+            
+    # Look for keywords in user's request
+    keywords = re.findall(r'the\s+(.+?)\s+article', user_input.lower())
+    if keywords:
+        # Try to find a URL that matches the keyword
+        keyword = keywords[0]
+        keyword_matches = []
+        
+        # Find article titles or descriptions containing the keyword
+        lines = last_ai_message.split('\n')
+        for i, line in enumerate(lines):
+            if keyword in line.lower():
+                # Look for a URL in this line or the next few lines
+                for j in range(i, min(i + 3, len(lines))):
+                    url_match = re.search(r'(https?://[^\s]+)', lines[j])
+                    if url_match:
+                        keyword_matches.append(url_match.group(1))
+                        break
+        
+        if keyword_matches:
+            return keyword_matches
     
-    return urls_to_crawl
+    # Return empty list if nothing found
+    return []
 
-# Updated process_selection function
+async def process_prompts_to_images(prompts: Union[List[Dict], List[str]], platform: str = "youtube") -> Dict:
+    """Process prompts from prompt generation agent to create images.
+    
+    Args:
+        prompts: List of prompt dictionaries or strings
+        platform: Target platform for optimization
+        
+    Returns:
+        Dict with processing results
+    """
+    print("\n🎨 Processing prompts to generate images...")
+    
+    # First check if image generation is available
+    from image_generation_agent import check_image_generation_status
+    status_json = await check_image_generation_status()
+    status = json.loads(status_json)
+    
+    if status.get("status") != "available":
+        print(f"\n⚠️ Warning: {status.get('message', 'Image generation not available')}")
+        print(f"Fallback: {status.get('fallback', 'Use manual generation')}")
+        
+        # Return the prompts for manual generation
+        formatted_prompts = []
+        for i, prompt in enumerate(prompts):
+            if isinstance(prompt, dict):
+                prompt_text = prompt.get("prompt", "")
+                formatted_prompts.append({
+                    "scene": f"Scene {i+1}",
+                    "prompt": prompt_text,
+                    "manual_tools": ["DALL-E 3 (via ChatGPT)", "Canva AI", "Leonardo.AI"]
+                })
+            else:
+                formatted_prompts.append({
+                    "scene": f"Scene {i+1}",
+                    "prompt": prompt,
+                    "manual_tools": ["DALL-E 3 (via ChatGPT)", "Canva AI", "Leonardo.AI"]
+                })
+                
+        return {
+            "status": "unavailable", 
+            "message": status.get("message"), 
+            "fallback": status.get("fallback"),
+            "formatted_prompts": formatted_prompts
+        }
+    
+    results = []
+    
+    # Process each prompt
+    for i, prompt in enumerate(prompts):
+        print(f"\n📝 Processing prompt {i+1}/{len(prompts)}")
+        
+        # Extract prompt text
+        prompt_text = prompt.get("prompt", "") if isinstance(prompt, dict) else prompt
+        
+        if not prompt_text:
+            continue
+            
+        # Generate the image
+        from image_generation_agent import generate_image_flux
+        
+        # Prepare enhanced prompt
+        enhanced_prompt = f"{prompt_text}, high quality, professional {platform} style"
+        
+        # Generate image
+        result_json = await generate_image_flux(enhanced_prompt)
+        
+        # Parse result
+        try:
+            result = json.loads(result_json)
+            results.append(result)
+            
+            if "error" in result:
+                print(f"❌ Error generating image {i+1}: {result['error']}")
+            else:
+                print(f"✅ Successfully generated image: {result.get('file_path', 'unknown')}")
+                
+        except json.JSONDecodeError:
+            print(f"❌ Error parsing result JSON: {result_json}")
+            results.append({"error": "Failed to parse result", "status": "failed"})
+    
+    # Return summary of results
+    success_count = sum(1 for r in results if r.get("status") == "success")
+    
+    print(f"\n✅ Image generation complete: {success_count}/{len(prompts)} successful")
+    return {
+        "status": "completed", 
+        "success": success_count, 
+        "total": len(prompts), 
+        "results": results
+    }
+
+async def generate_visuals_from_timing(visual_timing: Union[Dict, str], platform: str = "youtube") -> Dict:
+    """Generate visuals based on timing data from visual agent.
+    
+    Args:
+        visual_timing: Visual timing data (dict or string format)
+        platform: Target platform for optimization
+        
+    Returns:
+        Dict with generation results
+    """
+    print("\n🎬 Generating visuals from timing data...")
+    
+    # First check if image generation is available
+    from image_generation_agent import check_image_generation_status
+    status_json = await check_image_generation_status()
+    status = json.loads(status_json)
+    
+    if status.get("status") != "available":
+        print(f"\n⚠️ Warning: {status.get('message', 'Image generation not available')}")
+        print(f"Fallback: {status.get('fallback', 'Use manual generation')}")
+        
+        # Try to extract visual cues from the timing data
+        from image_generation_agent import extract_visual_cues_from_timing
+        
+        if isinstance(visual_timing, str):
+            cues_json = await extract_visual_cues_from_timing(visual_timing)
+            cues = json.loads(cues_json)
+            
+            if cues.get("status") == "success" and len(cues.get("cues", [])) > 0:
+                manual_prompts = []
+                for i, cue in enumerate(cues.get("cues", [])):
+                    manual_prompts.append({
+                        "timestamp": cue.get("timestamp", f"Scene {i+1}"),
+                        "description": cue.get("description", ""),
+                        "priority": cue.get("priority", "medium"),
+                        "prompt": f"Professional cinematic shot: {cue.get('description', '')}, high quality, detailed, film still, professional lighting"
+                    })
+                
+                return {
+                    "status": "manual_required",
+                    "message": status.get("message"),
+                    "fallback": status.get("fallback"),
+                    "manual_prompts": manual_prompts,
+                    "recommended_tools": ["DALL-E 3 (via ChatGPT)", "Canva AI", "Leonardo.AI"]
+                }
+        
+        return {
+            "status": "unavailable",
+            "message": status.get("message"),
+            "fallback": status.get("fallback")
+        }
+    
+    try:
+        # Process the visual timing data
+        from image_generation_agent import generate_from_visual_timing
+        
+        # Generate images
+        result_json = await generate_from_visual_timing(visual_timing)
+        
+        # Parse result
+        try:
+            result = json.loads(result_json)
+            
+            if "error" in result:
+                print(f"❌ Error generating visuals: {result['error']}")
+                return {
+                    "error": result["error"], 
+                    "status": "failed", 
+                    "fallback": "Use manual image generation with DALL-E 3, Canva, or Leonardo.ai"
+                }
+            else:
+                print(f"✅ Successfully generated {result.get('generated_images', 0)} visuals")
+                return result
+                
+        except json.JSONDecodeError:
+            print(f"❌ Error parsing result JSON: {result_json}")
+            return {"error": "Failed to parse result", "status": "failed"}
+            
+    except Exception as e:
+        print(f"❌ Error during visual generation: {str(e)}")
+        return {"error": str(e), "status": "failed"}
+
+async def test_image_generation_flow():
+    """Test the image generation flow with multiple approaches."""
+    print("🧪 Testing image generation flow...")
+    
+    test_prompt = "Professional b-roll footage of AI technology, blue circuit board with nodes"
+    
+    try:
+        # Try force generation first (bypasses status checks)
+        result = await force_image_generation(test_prompt)
+        
+        if "error" not in result:
+            print(f"✅ Test successful! Image generated at {result.get('file_path')}")
+            return True
+            
+        # If that fails too, show the error
+        print(f"❌ All generation attempts failed: {result.get('error')}")
+        print("💡 Try manual image generation with DALL-E 3, Canva, or Leonardo.ai")
+        return False
+            
+    except Exception as e:
+        print(f"❌ Error during test: {str(e)}")
+        return False
+
 async def process_selection(urls_to_crawl: list, platform: str):
-    """Process selected articles: crawl, store, generate script, and create visual timing."""
+    """Process selected articles: crawl, store, generate script, create visual timing and images."""
     print(f"\n🎯 Processing {len(urls_to_crawl)} selected article(s) for {platform}...")
 
     if len(urls_to_crawl) == 1:
@@ -423,12 +586,157 @@ async def process_selection(urls_to_crawl: list, platform: str):
             print(f"❌ Storage error: {str(e)}")
             return
         
-        print(f"\n✅ Complete workflow finished for {platform}!")
-        print("📊 Summary:")
-        print(f"   • Article crawled and stored")
-        print(f"   • Ready for script generation")
-        print(f"   • Ready for visual timing creation")
+        # Generate script
+        print(f"\n📝 Generating script for {platform}...")
+        from scripting_agent import generate_viral_script
         
-    # Handle multiple URLs case...
+        try:
+            script = await generate_viral_script(article_data, platform)
+            print(f"\n📜 Script generated:\n{script[:500]}...")
+        except Exception as e:
+            print(f"❌ Script generation error: {str(e)}")
+            return
+        
+        # Generate visual timing
+        print("\n🎭 Generating visual timing plan...")
+        try:
+            from visual_agent import generate_visual_timing
+            
+            visual_timing = await generate_visual_timing(
+                script_content=script,
+                article_data=article_data,
+                platform=platform
+            )
+            
+            print(f"\n🎬 Visual timing plan generated")
+            
+            # Extract visual cues from timing
+            print("\n📊 Extracting visual cues...")
+            from image_generation_agent import extract_visual_cues_from_timing
+            
+            visual_cues_json = await extract_visual_cues_from_timing(visual_timing)
+            visual_cues = json.loads(visual_cues_json)
+            
+            if visual_cues.get("status") != "success":
+                print(f"⚠️ Warning: Could not extract visual cues properly")
+                visual_cues = {"cues": []}
+            
+            # Generate images based on timing
+            print("\n🖼️ Generating images for key scenes...")
+            image_results = await generate_visuals_from_timing(visual_timing, platform)
+            
+            # Check for success or failure
+            if image_results.get("status") == "completed":
+                success_count = len([r for r in image_results.get("results", {}).values() 
+                                    if r.get("status") == "success"])
+                total_count = len(image_results.get("results", {}))
+                
+                print(f"\n✅ Generated {success_count}/{total_count} images successfully")
+                
+                # Show paths to generated images
+                if success_count > 0:
+                    print("\n📁 Generated images:")
+                    for timestamp, result in image_results.get("results", {}).items():
+                        if result.get("status") == "success":
+                            print(f"  • {timestamp}: {result.get('file_path')}")
+            
+            elif image_results.get("status") == "manual_required":
+                print("\n⚠️ Automatic image generation unavailable. Use these prompts for manual creation:")
+                for i, prompt in enumerate(image_results.get("manual_prompts", [])):
+                    print(f"\n📸 {prompt.get('timestamp', f'Scene {i+1}')}:")
+                    print(f"   {prompt.get('prompt')}")
+                
+                print("\n💡 Recommended tools: " + ", ".join(image_results.get("recommended_tools", [])))
+                
+            else:
+                print(f"\n⚠️ Image generation encountered issues: {image_results.get('error', 'Unknown error')}")
+                print("💡 Try manual image generation with DALL-E 3, Canva, or Leonardo.ai")
+            
+            print("\n✅ Complete workflow finished!")
+            print("📊 Final Summary:")
+            print(f"   • Article crawled and stored in database")
+            print(f"   • Script generated for {platform.upper()}")
+            print(f"   • Visual timing plan created with {len(visual_cues.get('cues', []))} visual cues")
+            print(f"   • Images: {image_results.get('generated_images', 0)} generated / {len(visual_cues.get('cues', []))} required")
+            
+            # Store the script in Supabase
+            from supabase_agent import store_script_content
+            
+            script_data = {
+                "article_id": article_data.get("id", ""),
+                "script_content": script,
+                "platform": platform,
+                "hook": script.split("\n")[0] if script else "",
+                "visual_suggestions": visual_cues.get("cues", []),
+                "metadata": {
+                    "word_count": len(script.split()),
+                    "estimated_duration": len(script.split()) * 0.5,
+                    "platform": platform,
+                    "image_count": image_results.get("generated_images", 0)
+                }
+            }
+            
+            script_storage_result = store_script_content(script_data)
+            print(f"\n💾 Script storage result:\n{script_storage_result[:500]}...")
+            
+        except Exception as e:
+            print(f"❌ Error in visual process: {str(e)}")
+            print("💡 Try generating images manually using the prompts from the visual timing plan")
+        
+    # Handle multiple URLs case
     else:
         print("Multiple article processing not implemented yet")
+
+# Export necessary functions
+async def run_agent(message):
+    response = await agent.ainvoke(message)
+    return response
+
+# Entry point for testing
+if __name__ == "__main__":
+    import asyncio
+    
+    async def main():
+        # Test the image generation flow
+        result = await test_image_generation_flow()
+        print(f"Image generation test result: {result}")
+        
+    asyncio.run(main())
+
+async def force_image_generation(prompt: str) -> Dict:
+    """Force image generation with Together AI, bypassing status checks."""
+    try:
+        print(f"\n🎨 Forcing direct image generation with Together AI...")
+        print(f"📝 Prompt: {prompt}")
+        
+        from image_generation_agent import generate_image_flux
+        
+        # First attempt with original prompt
+        result_json = await generate_image_flux(prompt)
+        result = json.loads(result_json)
+        
+        # If first attempt fails, try with simplified prompt
+        if "error" in result:
+            print(f"⚠️ First attempt failed, retrying with simplified prompt...")
+            
+            # Create simplified version of the prompt
+            simplified_prompt = prompt.split(",")[0] + ", simple clean style"
+            result_json = await generate_image_flux(simplified_prompt)
+            result = json.loads(result_json)
+            
+            # If second attempt fails, try with minimal parameters
+            if "error" in result:
+                print(f"⚠️ Second attempt failed, trying with minimal parameters...")
+                minimal_prompt = "Simple " + prompt.split()[0] + " " + prompt.split()[1]
+                result_json = await generate_image_flux(
+                    minimal_prompt, 
+                    model="black-forest-labs/FLUX.1-schnell-Free", 
+                    width=512, 
+                    height=512
+                )
+                result = json.loads(result_json)
+        
+        return result
+    except Exception as e:
+        print(f"❌ Force generation failed: {str(e)}")
+        return {"error": str(e), "status": "failed"}

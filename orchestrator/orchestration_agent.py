@@ -1,6 +1,7 @@
-from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_community.chat_models import ChatLiteLLM
+from langchain.agents import create_structured_chat_agent, AgentExecutor
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 import os
 import asyncio
 import json
@@ -72,29 +73,59 @@ Ready to help you find the next viral content idea?
 # Combine all available tools (currently just search tools)
 all_tools = search_tools
 
-# Create the agent with search tools
-agent = create_react_agent(
-    model, 
-    all_tools, 
-    prompt=SYSTEM_PROMPT
+# Create chat prompt template with required variables
+orch_prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT + """
+
+You have access to the following tools:
+{tools}
+
+Use the following format:
+
+```
+Action: the action to take, should be one of [{tool_names}]
+Action Input: the input to the action
+Observation: the result of the action
+```
+
+When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
+
+```
+Final Answer: [your response here]
+```
+
+Begin!
+"""),
+    MessagesPlaceholder(variable_name="chat_history", optional=True),
+    ("human", "{input}"),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
+])
+
+# Create the agent with search tools using structured chat agent
+agent = create_structured_chat_agent(
+    llm=model,
+    tools=all_tools,
+    prompt=orch_prompt
+)
+
+# Create agent executor
+agent_executor = AgentExecutor(
+    agent=agent,
+    tools=all_tools,
+    verbose=True,
+    handle_parsing_errors=True,
+    max_iterations=3
 )
 
 async def run_orchestration_agent(message: str):
     """Run the orchestration agent with a user message"""
     try:
-        # Create the message
-        messages = [HumanMessage(content=message)]
-        
         # Run the agent
-        response = await agent.ainvoke({"messages": messages})
+        response = await agent_executor.ainvoke({"input": message})
         
-        # Extract the last AI message
-        if response and "messages" in response:
-            last_message = response["messages"][-1]
-            if hasattr(last_message, 'content'):
-                return last_message.content
-            else:
-                return str(last_message)
+        # Extract the response
+        if response and "output" in response:
+            return response["output"]
         else:
             return str(response)
             

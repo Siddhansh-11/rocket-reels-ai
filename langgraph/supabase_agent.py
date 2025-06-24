@@ -519,6 +519,172 @@ def store_script_content(script_data: dict) -> str:
         return f"❌ Error storing script in Supabase: {str(e)}"
 
 @tool
+def retrieve_stored_scripts(platform: str = None, limit: int = 10, approved_only: bool = False) -> str:
+    """Retrieve stored scripts from Supabase database.
+    
+    Args:
+        platform: Optional platform filter (e.g., 'youtube', 'tiktok')
+        limit: Maximum number of scripts to retrieve
+        approved_only: If True, only return approved scripts
+        
+    Returns:
+        Formatted list of stored scripts
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        if not supabase:
+            return "❌ Error: Unable to connect to database. Please check your Supabase configuration."
+        
+        # Build query with joins to get article title
+        query = supabase.table('scripts').select(
+            'id,article_id,platform,script_content,hook,visual_suggestions,approved,created_at,articles(title,url,domain)'
+        ).order('created_at', desc=True).limit(limit)
+        
+        if platform:
+            query = query.eq('platform', platform.lower())
+            
+        if approved_only:
+            query = query.eq('approved', True)
+        
+        response = query.execute()
+        
+        if not response or not hasattr(response, 'data'):
+            return "❌ Error: Invalid response from database. Please try again."
+        
+        if not response.data:
+            return "📭 No scripts found in the database."
+        
+        scripts_list = "📜 **STORED SCRIPTS FROM SUPABASE DATABASE**\n\n"
+        
+        for i, script in enumerate(response.data, 1):
+            # Handle potential None values
+            script_id = script.get('id', 'Unknown')
+            platform = script.get('platform', 'unknown') or 'unknown'
+            script_content = script.get('script_content', 'No content') or 'No content'
+            hook = script.get('hook', 'No hook') or 'No hook'
+            visual_count = len(script.get('visual_suggestions', []))
+            approved = script.get('approved', False)
+            created_at = script.get('created_at', 'Unknown date') or 'Unknown date'
+            
+            # Get article info
+            article_info = script.get('articles', {}) or {}
+            article_title = article_info.get('title', 'Unknown Article') if article_info else 'Unknown Article'
+            article_url = article_info.get('url', 'No URL') if article_info else 'No URL'
+            
+            status_emoji = "✅" if approved else "⏳"
+            status_text = "Approved" if approved else "Pending"
+            
+            scripts_list += f"""
+**{i}. {article_title[:50]}... - {platform.upper()}**
+- Script ID: {script_id}
+- Article URL: {article_url}
+- Platform: {platform.upper()}
+- Hook: {hook[:50]}...
+- Visual Suggestions: {visual_count}
+- Status: {status_emoji} {status_text}
+- Created: {created_at[:19] if len(str(created_at)) > 19 else created_at}
+- Content Preview: {script_content[:100]}...
+---
+"""
+        
+        return scripts_list
+        
+    except Exception as e:
+        return f"❌ Error retrieving scripts: {str(e)}\n\n**Possible solutions:**\n1. Check database connection\n2. Verify Supabase credentials\n3. Try again in a moment\n4. Contact support if issue persists"
+
+@tool
+def get_script_by_id(script_id: str) -> str:
+    """Retrieve a specific script by ID from Supabase.
+    
+    Args:
+        script_id: The ID of the script to retrieve
+        
+    Returns:
+        Full script content if found
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        response = supabase.table('scripts').select(
+            'id,article_id,platform,script_content,hook,visual_suggestions,approved,created_at,metadata,articles(title,url,domain)'
+        ).eq('id', script_id).execute()
+        
+        if not response.data:
+            return f"❌ Script not found in database for ID: {script_id}"
+        
+        script = response.data[0]
+        article_info = script.get('articles', {}) or {}
+        
+        return f"""
+📜 **SCRIPT RETRIEVED FROM SUPABASE**
+
+**Script ID:** {script['id']}
+**Article Title:** {article_info.get('title', 'Unknown Article')}
+**Article URL:** {article_info.get('url', 'No URL')}
+**Platform:** {script['platform'].upper()}
+**Status:** {"✅ Approved" if script['approved'] else "⏳ Pending"}
+**Created:** {script['created_at']}
+
+**Hook:**
+{script['hook']}
+
+**Script Content:**
+{script['script_content']}
+
+**Visual Suggestions:**
+{', '.join(script.get('visual_suggestions', []))}
+
+**Metadata:**
+{json.dumps(script.get('metadata', {}), indent=2)}
+"""
+        
+    except Exception as e:
+        return f"❌ Error retrieving script: {str(e)}"
+
+@tool
+def get_scripts_by_article_id(article_id: str) -> str:
+    """Retrieve all scripts for a specific article.
+    
+    Args:
+        article_id: The ID of the article
+        
+    Returns:
+        List of scripts for the article
+    """
+    try:
+        supabase = get_supabase_client()
+        
+        response = supabase.table('scripts').select(
+            'id,platform,script_content,hook,visual_suggestions,approved,created_at'
+        ).eq('article_id', article_id).order('created_at', desc=True).execute()
+        
+        if not response.data:
+            return f"❌ No scripts found for article ID: {article_id}"
+        
+        scripts_list = f"📜 **SCRIPTS FOR ARTICLE {article_id}**\n\n"
+        
+        for i, script in enumerate(response.data, 1):
+            status_emoji = "✅" if script['approved'] else "⏳"
+            status_text = "Approved" if script['approved'] else "Pending"
+            
+            scripts_list += f"""
+**{i}. {script['platform'].upper()} Script**
+- Script ID: {script['id']}
+- Status: {status_emoji} {status_text}
+- Hook: {script['hook'][:50]}...
+- Visual Suggestions: {len(script.get('visual_suggestions', []))}
+- Created: {script['created_at'][:19]}
+- Content: {script['script_content'][:100]}...
+---
+"""
+        
+        return scripts_list
+        
+    except Exception as e:
+        return f"❌ Error retrieving scripts for article: {str(e)}"
+
+@tool
 def approve_script(script_id: str) -> str:
     """Approve a script and mark it as ready for use.
     
@@ -562,5 +728,8 @@ supabase_tools_sync_wrapped = [
     get_stored_article_by_keyword,
     get_article_id_by_url,
     store_script_content,
+    retrieve_stored_scripts,
+    get_script_by_id,
+    get_scripts_by_article_id,
     approve_script
 ]

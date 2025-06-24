@@ -1,5 +1,6 @@
 langgraph
 langchain
+langchain-core
 langchain-anthropic
 langchain-community
 mcp
@@ -17,3 +18,4 @@ beautifulsoup4
 mistralai
 pillow
 httpx
+litellm
