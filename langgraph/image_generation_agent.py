@@ -10,12 +10,38 @@ import io
 import json
 from PIL import Image
 from typing import Dict, List, Any, Optional, Union
+from gdrive_storage import initialize_gdrive_storage, save_generated_image_to_gdrive, extract_topic_from_prompt, save_multiple_images_to_gdrive
 
 # Load environment variables
 load_dotenv()
 
 # Get Together AI API key
 TOGETHER_API_KEY = os.getenv("TogetherAI_API_KEY")
+
+# Initialize Google Drive storage (will be initialized once when needed)
+_gdrive_storage = None
+_gdrive_storage_lock = None
+
+async def get_gdrive_storage():
+    """Get or initialize Google Drive storage instance (thread-safe)"""
+    global _gdrive_storage, _gdrive_storage_lock
+    
+    # Initialize lock if needed
+    if _gdrive_storage_lock is None:
+        import asyncio
+        _gdrive_storage_lock = asyncio.Lock()
+    
+    async with _gdrive_storage_lock:
+        if _gdrive_storage is None:
+            try:
+                # Run the synchronous initialization in a thread
+                _gdrive_storage = await asyncio.to_thread(initialize_gdrive_storage)
+                print("✅ Google Drive storage initialized")
+            except Exception as e:
+                print(f"⚠️ Google Drive storage not available: {str(e)}")
+                _gdrive_storage = False  # Mark as unavailable
+        
+        return _gdrive_storage if _gdrive_storage is not False else None
 
 # The free FLUX model that works with free tier
 FREE_FLUX_MODEL = "black-forest-labs/FLUX.1-schnell-Free"
@@ -37,7 +63,9 @@ async def generate_image_with_together(
     prompt: str, 
     output_path: Optional[str] = None,
     width: int = 1024,
-    height: int = 576  # 16:9 aspect ratio
+    height: int = 576,  # 16:9 aspect ratio
+    topic_name: Optional[str] = None,
+    upload_to_gdrive: bool = True
 ) -> Dict[str, Any]:
     """Generate an image using Together AI's free FLUX model.
     
@@ -46,9 +74,11 @@ async def generate_image_with_together(
         output_path (str, optional): Path to save the image. If None, displays image details only.
         width (int): Width of the generated image
         height (int): Height of the generated image
+        topic_name (str, optional): Topic name for Google Drive organization
+        upload_to_gdrive (bool): Whether to upload to Google Drive
         
     Returns:
-        dict: Response data containing image URL or error message
+        dict: Response data containing image URL, file paths, and Google Drive info
     """
     print(f"\n🔄 Generating image using Together AI ({FREE_FLUX_MODEL})...")
     print(f"📝 Prompt: {prompt}")
@@ -92,11 +122,39 @@ async def generate_image_with_together(
                                     await f.write(await img_response.read())
                                 print(f"✅ Image saved to {output_path}")
                     
+                # Upload to Google Drive if enabled
+                gdrive_info = {}
+                if upload_to_gdrive and output_path:
+                    try:
+                        storage = await get_gdrive_storage()
+                        if storage:
+                            # Extract topic from prompt if not provided
+                            if not topic_name:
+                                topic_name = extract_topic_from_prompt(prompt)
+                            
+                            # Upload to Google Drive with topic organization
+                            gdrive_file_id = await asyncio.to_thread(
+                                save_generated_image_to_gdrive, 
+                                output_path, 
+                                storage, 
+                                topic_name
+                            )
+                            gdrive_info = {
+                                "gdrive_file_id": gdrive_file_id,
+                                "topic_folder": topic_name,
+                                "gdrive_uploaded": True
+                            }
+                            print(f"☁️ Image uploaded to Google Drive in topic folder: {topic_name}")
+                    except Exception as e:
+                        gdrive_info = {"gdrive_error": str(e), "gdrive_uploaded": False}
+                        print(f"⚠️ Google Drive upload failed: {str(e)}")
+                
                 print("✅ Image generation successful!")
                 return {
                     "status": "success",
                     "image_url": image_url,
-                    "file_path": output_path
+                    "file_path": output_path,
+                    **gdrive_info
                 }
             
             # Try to get base64 data if URL is not available
@@ -114,11 +172,39 @@ async def generate_image_with_together(
                     await asyncio.to_thread(lambda: image.save(output_path))
                     print(f"✅ Image saved to {output_path}")
                 
+                # Upload to Google Drive if enabled
+                gdrive_info = {}
+                if upload_to_gdrive and output_path:
+                    try:
+                        storage = await get_gdrive_storage()
+                        if storage:
+                            # Extract topic from prompt if not provided
+                            if not topic_name:
+                                topic_name = extract_topic_from_prompt(prompt)
+                            
+                            # Upload to Google Drive with topic organization
+                            gdrive_file_id = await asyncio.to_thread(
+                                save_generated_image_to_gdrive, 
+                                output_path, 
+                                storage, 
+                                topic_name
+                            )
+                            gdrive_info = {
+                                "gdrive_file_id": gdrive_file_id,
+                                "topic_folder": topic_name,
+                                "gdrive_uploaded": True
+                            }
+                            print(f"☁️ Image uploaded to Google Drive in topic folder: {topic_name}")
+                    except Exception as e:
+                        gdrive_info = {"gdrive_error": str(e), "gdrive_uploaded": False}
+                        print(f"⚠️ Google Drive upload failed: {str(e)}")
+                
                 print("✅ Image generation successful!")
                 return {
                     "status": "success",
                     "base64_image": image_b64[:100] + "...",  # Truncated for display
-                    "file_path": output_path
+                    "file_path": output_path,
+                    **gdrive_info
                 }
         
         print("❌ No image data found in response")
@@ -129,7 +215,7 @@ async def generate_image_with_together(
         return {"error": str(e)}
 
 @tool
-async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: int = 1024, height: int = 576) -> str:
+async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: int = 1024, height: int = 576, topic_name: Optional[str] = None) -> str:
     """Generate an image using Together AI's FLUX API.
     
     Args:
@@ -137,9 +223,10 @@ async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: 
         model: Model to use (default: free tier model)
         width: Width of the generated image
         height: Height of the generated image
+        topic_name: Topic name for Google Drive folder organization (optional)
     
     Returns:
-        JSON string with image details and URL
+        JSON string with image details, URL, and Google Drive info
     """
     try:
         import uuid
@@ -156,7 +243,9 @@ async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: 
             prompt=prompt,
             output_path=str(output_path),
             width=width,
-            height=height
+            height=height,
+            topic_name=topic_name,
+            upload_to_gdrive=True
         )
         
         if "error" in result:
@@ -167,12 +256,22 @@ async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: 
             })
             
         # Return successful result with all necessary information
-        return json.dumps({
+        response_data = {
             "status": "success",
             "file_path": str(output_path),
             "image_url": result.get("image_url", ""),
             "prompt": prompt
-        })
+        }
+        
+        # Add Google Drive info if available
+        if "gdrive_file_id" in result:
+            response_data.update({
+                "gdrive_file_id": result["gdrive_file_id"],
+                "topic_folder": result.get("topic_folder", ""),
+                "gdrive_uploaded": result.get("gdrive_uploaded", False)
+            })
+        
+        return json.dumps(response_data)
         
     except Exception as e:
         return json.dumps({
@@ -182,7 +281,7 @@ async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: 
         })
 
 @tool
-async def generate_from_visual_timing(visual_timing: Union[Dict, str], output_dir: str = "scene_images") -> str:
+async def generate_from_visual_timing(visual_timing: Union[Dict, str], output_dir: str = "scene_images", topic_name: Optional[str] = None) -> str:
     """Generate images from visual timing plan."""
     try:
         # Ensure the output directory exists asynchronously
@@ -239,20 +338,32 @@ async def generate_from_visual_timing(visual_timing: Union[Dict, str], output_di
                     f"high quality, detailed, 16:9 aspect ratio, film still, professional lighting"
                 )
                 
-                # Generate the image
+                # Generate the image with Google Drive upload
                 result = await generate_image_with_together(
                     prompt=enhanced_prompt,
-                    output_path=str(output_path)
+                    output_path=str(output_path),
+                    topic_name=topic_name,
+                    upload_to_gdrive=True
                 )
                 
                 # Store the result
-                results[str(timestamp)] = {
+                result_data = {
                     "file_path": str(output_path) if "error" not in result else None,
                     "description": description,
                     "status": "success" if "error" not in result else "failed",
                     "error": result.get("error", None) if "error" in result else None,
                     "prompt": enhanced_prompt
                 }
+                
+                # Add Google Drive info if available
+                if "gdrive_file_id" in result:
+                    result_data.update({
+                        "gdrive_file_id": result["gdrive_file_id"],
+                        "topic_folder": result.get("topic_folder", ""),
+                        "gdrive_uploaded": result.get("gdrive_uploaded", False)
+                    })
+                
+                results[str(timestamp)] = result_data
         
         return json.dumps({
             "status": "completed",

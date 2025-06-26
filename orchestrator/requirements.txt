@@ -19,3 +19,4 @@ mistralai
 pillow
 httpx
 litellm
+together

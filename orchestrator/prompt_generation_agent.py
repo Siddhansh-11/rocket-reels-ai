@@ -3,9 +3,13 @@ import asyncio
 import json
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import anthropic
+from langchain_community.chat_models import ChatLiteLLM
+from langchain_core.messages import HumanMessage
 from supabase import create_client, Client
-from .workflow_state import ContentState, PhaseOutput
+try:
+    from .workflow_state import ContentState, PhaseOutput
+except ImportError:
+    from workflow_state import ContentState, PhaseOutput
 from langchain_core.messages import HumanMessage, AIMessage
 
 
@@ -13,7 +17,13 @@ class PromptGenerationAgent:
     """Agent for generating image prompts based on scripts."""
     
     def __init__(self):
-        self.anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        # Initialize DeepSeek client instead of Anthropic
+        self.deepseek_model = ChatLiteLLM(
+            model="deepseek/deepseek-chat",
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            max_tokens=2000,
+            temperature=0.7
+        )
         self.supabase = self._get_supabase_client()
         
     def _get_supabase_client(self):
@@ -41,7 +51,7 @@ class PromptGenerationAgent:
         try:
             print(f"🎨 Generating {num_prompts} image prompts from script...")
             
-            # Generate prompts using Claude
+            # Generate prompts using DeepSeek
             prompt_generation_prompt = f"""
             You are an expert at creating detailed image generation prompts for social media reels/shorts.
             
@@ -69,15 +79,11 @@ class PromptGenerationAgent:
             Return ONLY the JSON array, no other text.
             """
             
-            response = self.anthropic_client.messages.create(
-                model="claude-3-sonnet-20240229",
-                max_tokens=2000,
-                temperature=0.7,
-                messages=[{"role": "user", "content": prompt_generation_prompt}]
-            )
+            # Call DeepSeek API via LangChain
+            response = await self.deepseek_model.ainvoke([HumanMessage(content=prompt_generation_prompt)])
             
             # Parse the response
-            prompts_data = json.loads(response.content[0].text)
+            prompts_data = json.loads(response.content)
             
             # Store prompts in database
             stored_prompts = []
@@ -93,7 +99,7 @@ class PromptGenerationAgent:
                     'created_at': datetime.now().isoformat(),
                     'metadata': {
                         'script_snippet': script_content[:200] + '...' if len(script_content) > 200 else script_content,
-                        'generation_model': 'claude-3-sonnet-20240229'
+                        'generation_model': 'deepseek-chat'
                     }
                 }
                 

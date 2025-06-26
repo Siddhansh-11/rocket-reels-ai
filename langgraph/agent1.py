@@ -15,6 +15,8 @@ from crawl_agent import crawl_tools
 from supabase_agent import supabase_tools_sync_wrapped
 from prompt_generation_agent import prompt_generation_tools
 from image_generation_agent import image_generation_tools
+from video_prompt_generation_agent import VideoPromptGenerationAgent
+from video_generation_agent import VideoGenerationAgent
 
 # Load environment variables
 load_dotenv("../.env")
@@ -82,6 +84,17 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
   3. RETRY with alternative formatting of the prompt
 - Manual alternatives (DALL-E, Canva, Leonardo.AI) are STRICTLY last resort options
 
+🎬 **VIDEO GENERATION FUNCTION:**
+- Generates engaging video content from static images using AI-powered motion
+- First creates video prompts that describe motion, transitions, and camera movements
+- Uses Google Gemini API (if available) or falls back to OpenCV with Ken Burns effects
+- Supports multiple video generation methods:
+  1. Google Gemini Video API (primary method when available)
+  2. Replicate Stable Video Diffusion (alternative AI method)
+  3. OpenCV with professional transitions (reliable fallback)
+- Creates smooth transitions between images with natural motion flow
+- Combines segments into final video ready for social media platforms
+
 📋 **WORKFLOW PROCESS:**
 
 **PHASE 1 - SEARCH & DISCOVERY:**
@@ -130,6 +143,21 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 21. After 2-3 failed attempts with Together AI, only then offer manual alternatives:
     - Provide the prompts for use with DALL-E, Canva, or Leonardo.AI
     - Explain which tool would work best for each prompt
+
+**PHASE 7 - VIDEO PROMPT GENERATION:**
+22. After successful image generation, offer to create video prompts
+23. Use video prompt generation agent to analyze scripts and image sequences
+24. Generate detailed motion descriptions, transition types, and camera movements
+25. Create timing information that matches the script's narrative flow
+26. Store video prompts in database for organized video creation workflow
+
+**PHASE 8 - VIDEO GENERATION:**
+27. Generate engaging videos from static images using AI-powered motion
+28. Use Google Gemini API for video generation (when available)
+29. Fall back to Replicate Stable Video Diffusion or OpenCV methods
+30. Create smooth transitions with Ken Burns effects and professional motion
+31. Combine all segments into final video ready for social media publishing
+32. Store generated videos in database with metadata and file paths
 
 🎯 **SPECIAL CAPABILITIES:**
 
@@ -634,11 +662,72 @@ async def process_selection(urls_to_crawl: list, platform: str):
                 print(f"\n✅ Generated {success_count}/{total_count} images successfully")
                 
                 # Show paths to generated images
+                generated_image_paths = []
                 if success_count > 0:
                     print("\n📁 Generated images:")
                     for timestamp, result in image_results.get("results", {}).items():
                         if result.get("status") == "success":
-                            print(f"  • {timestamp}: {result.get('file_path')}")
+                            file_path = result.get('file_path')
+                            print(f"  • {timestamp}: {file_path}")
+                            generated_image_paths.append({
+                                "filename": file_path.split("/")[-1] if file_path else "",
+                                "timestamp": timestamp,
+                                "full_path": file_path
+                            })
+                
+                # Phase 7: Video Prompt Generation
+                if generated_image_paths:
+                    print("\n🎬 Generating video prompts for smooth transitions...")
+                    try:
+                        video_prompt_agent = VideoPromptGenerationAgent()
+                        
+                        video_prompt_state = {
+                            'script_content': script,
+                            'image_prompts': visual_cues.get('cues', []),
+                            'generated_images': generated_image_paths,
+                            'visual_timing_plan': visual_timing if isinstance(visual_timing, dict) else {},
+                            'video_prompts': None,
+                            'error': None,
+                            'cost': 0.0
+                        }
+                        
+                        video_prompt_result = video_prompt_agent.generate_video_prompts(video_prompt_state)
+                        
+                        if video_prompt_result.get('video_prompts'):
+                            print(f"✅ Generated {len(video_prompt_result['video_prompts'])} video prompts")
+                            
+                            # Phase 8: Video Generation
+                            print("\n🎥 Generating video from images...")
+                            try:
+                                video_gen_agent = VideoGenerationAgent()
+                                
+                                video_gen_state = {
+                                    'generated_images': generated_image_paths,
+                                    'video_prompts': video_prompt_result['video_prompts'],
+                                    'script_content': script,
+                                    'generated_videos': None,
+                                    'final_video_path': None,
+                                    'error': None,
+                                    'cost': 0.0
+                                }
+                                
+                                video_result = video_gen_agent.generate_videos(video_gen_state)
+                                
+                                if video_result.get('final_video_path'):
+                                    print(f"🎉 Final video created: {video_result['final_video_path']}")
+                                    print(f"📊 Video segments: {len(video_result.get('generated_videos', []))}")
+                                else:
+                                    print(f"⚠️ Video generation failed: {video_result.get('error', 'Unknown error')}")
+                                    
+                            except Exception as e:
+                                print(f"❌ Video generation error: {str(e)}")
+                                print("💡 Images are still available for manual video creation")
+                        else:
+                            print(f"⚠️ Video prompt generation failed: {video_prompt_result.get('error', 'Unknown error')}")
+                            
+                    except Exception as e:
+                        print(f"❌ Video prompt generation error: {str(e)}")
+                        print("💡 Images are still available for manual video creation")
             
             elif image_results.get("status") == "manual_required":
                 print("\n⚠️ Automatic image generation unavailable. Use these prompts for manual creation:")
@@ -658,6 +747,15 @@ async def process_selection(urls_to_crawl: list, platform: str):
             print(f"   • Script generated for {platform.upper()}")
             print(f"   • Visual timing plan created with {len(visual_cues.get('cues', []))} visual cues")
             print(f"   • Images: {image_results.get('generated_images', 0)} generated / {len(visual_cues.get('cues', []))} required")
+            
+            # Check if video was generated and add to summary
+            if 'video_result' in locals() and video_result.get('final_video_path'):
+                print(f"   • Video: Final reel created at {video_result['final_video_path']}")
+                print(f"   • Video segments: {len(video_result.get('generated_videos', []))} combined")
+            elif 'video_prompt_result' in locals() and video_prompt_result.get('video_prompts'):
+                print(f"   • Video prompts: {len(video_prompt_result['video_prompts'])} generated (ready for video creation)")
+            else:
+                print(f"   • Video: Available for manual creation using generated images")
             
             # Store the script in Supabase
             from supabase_agent import store_script_content

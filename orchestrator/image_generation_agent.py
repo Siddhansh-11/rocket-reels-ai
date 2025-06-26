@@ -5,8 +5,14 @@ import base64
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import httpx
+import aiofiles
+import uuid
+from pathlib import Path
 from supabase import create_client, Client
-from .workflow_state import ContentState, PhaseOutput
+try:
+    from .workflow_state import ContentState, PhaseOutput
+except ImportError:
+    from workflow_state import ContentState, PhaseOutput
 from langchain_core.messages import HumanMessage, AIMessage
 
 
@@ -15,11 +21,33 @@ class ImageGenerationAgent:
     
     def __init__(self):
         self.supabase = self._get_supabase_client()
-        # You can configure different image generation services here
+        # Configure different image generation services
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.stability_api_key = os.getenv("STABILITY_API_KEY")
         self.replicate_api_key = os.getenv("REPLICATE_API_KEY")
         self.aiml_api_key = os.getenv("AIML_API_KEY")
+        self.together_api_key = os.getenv("TogetherAI_API_KEY")
+        
+        # Check Together AI availability
+        try:
+            from together import Together
+            self.together_available = True
+            if self.together_api_key:
+                # Initialize client lazily to avoid blocking operations in __init__
+                self._together_api_key = self.together_api_key
+                self.together_client = None
+            else:
+                self.together_client = None
+        except ImportError:
+            self.together_available = False
+            self.together_client = None
+    
+    def _get_together_client(self):
+        """Lazy initialization of Together client"""
+        if self.together_client is None and self._together_api_key:
+            from together import Together
+            self.together_client = Together(api_key=self._together_api_key)
+        return self.together_client
         
     def _get_supabase_client(self):
         """Get Supabase client with proper configuration."""
@@ -164,6 +192,79 @@ class ImageGenerationAgent:
         except Exception as e:
             return {"status": "error", "error": str(e)}
     
+    async def ensure_dir_exists(self, directory):
+        """Create directory asynchronously if it doesn't exist."""
+        if not os.path.exists(directory):
+            await asyncio.to_thread(os.makedirs, directory, exist_ok=True)
+    
+    async def generate_image_together(self, prompt: str, width: int = 1024, height: int = 576) -> Dict[str, Any]:
+        """Generate image using Together AI's FLUX model."""
+        if not self.together_available:
+            return {"status": "error", "error": "Together AI client not available. Install with: pip install together"}
+        
+        # Get Together client (lazy initialization)
+        together_client = self._get_together_client()
+        if not together_client:
+            return {"status": "error", "error": "Together AI API key not configured"}
+        
+        try:
+            # Generate unique filename
+            filename = f"{uuid.uuid4().hex[:8]}.jpg"
+            output_dir = Path("generated_images")
+            await self.ensure_dir_exists(output_dir)
+            output_path = output_dir / filename
+            
+            # Generate the image using FLUX model (async wrapped)
+            response = await asyncio.to_thread(
+                lambda: together_client.images.generate(
+                    prompt=prompt,
+                    model="black-forest-labs/FLUX.1-schnell-Free",
+                    steps=3,
+                    width=width,
+                    height=height,
+                    n=1
+                )
+            )
+            
+            # Check if the response has data and URL
+            if hasattr(response, 'data') and len(response.data) > 0:
+                if hasattr(response.data[0], 'url'):
+                    image_url = response.data[0].url
+                    
+                    # Download and save the image
+                    async with httpx.AsyncClient() as client:
+                        img_response = await client.get(image_url)
+                        if img_response.status_code == 200:
+                            async with aiofiles.open(output_path, 'wb') as f:
+                                await f.write(img_response.content)
+                    
+                    return {
+                        "status": "success",
+                        "image_url": image_url,
+                        "file_path": str(output_path),
+                        "model": "flux-schnell-free"
+                    }
+                
+                elif hasattr(response.data[0], 'b64_json') and response.data[0].b64_json:
+                    image_b64 = response.data[0].b64_json
+                    
+                    # Save base64 image
+                    image_data = base64.b64decode(image_b64)
+                    async with aiofiles.open(output_path, 'wb') as f:
+                        await f.write(image_data)
+                    
+                    return {
+                        "status": "success",
+                        "image_base64": image_b64[:100] + "...",
+                        "file_path": str(output_path),
+                        "model": "flux-schnell-free"
+                    }
+            
+            return {"status": "error", "error": "No image data in response"}
+                    
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
     async def generate_images_from_prompts(self, prompts: List[Dict[str, Any]], service: str = "openai") -> Dict[str, Any]:
         """
         Generate images for multiple prompts.
@@ -184,7 +285,21 @@ class ImageGenerationAgent:
                 print(f"  Generating image {i+1}/{len(prompts)}: {prompt_data['scene_description'][:50]}...")
                 
                 # Generate image based on service
-                if service == "openai":
+                if service == "together":
+                    # Map aspect ratio to dimensions for Together AI
+                    dimension_map = {
+                        "16:9": (1024, 576),
+                        "9:16": (576, 1024),
+                        "1:1": (1024, 1024)
+                    }
+                    width, height = dimension_map.get(prompt_data.get('aspect_ratio', '16:9'), (1024, 576))
+                    
+                    result = await self.generate_image_together(
+                        prompt=prompt_data['prompt'],
+                        width=width,
+                        height=height
+                    )
+                elif service == "openai":
                     # Map aspect ratio to DALL-E 3 sizes
                     size_map = {
                         "16:9": "1792x1024",
@@ -233,7 +348,7 @@ class ImageGenerationAgent:
                         }
                     }
                     
-                    # Store in Supabase
+                    # Store in Supabase (async wrapped)
                     stored_result = await asyncio.to_thread(
                         lambda: self.supabase.table('generated_images').insert(image_record).execute()
                     )
@@ -311,7 +426,7 @@ async def image_generation_agent(state: ContentState) -> ContentState:
             raise Exception("No prompts found in state. Please generate prompts first.")
         
         # Determine which service to use (can be configured via environment or state)
-        service = os.getenv("IMAGE_GENERATION_SERVICE", "openai")
+        service = os.getenv("IMAGE_GENERATION_SERVICE", "together")
         
         # Generate images
         result = await agent.generate_images_from_prompts(

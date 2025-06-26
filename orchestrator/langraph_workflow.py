@@ -19,6 +19,7 @@ try:
     from enhanced_crawl_agent import enhanced_crawl_with_media_ocr
     from enhanced_storage_agent import store_enhanced_article, format_storage_result
     CRAWL_IMPORTS_AVAILABLE = True
+    print("✅ Crawl and storage agents imported successfully")
 except ImportError as e:
     print(f"⚠️ Could not import crawl/storage modules: {e}")
     CRAWL_IMPORTS_AVAILABLE = False
@@ -32,14 +33,18 @@ try:
     from prompt_generation_agent import prompt_generation_agent
     from image_generation_agent import image_generation_agent
     PROMPT_IMAGE_AGENTS_AVAILABLE = True
+    print("✅ Prompt and image generation agents imported successfully")
 except ImportError as e:
     print(f"⚠️ Could not import prompt/image agents: {e}")
+    PROMPT_IMAGE_AGENTS_AVAILABLE = False
 
 try:
     from scripting_agent import generate_and_store_script, check_scripts_table_access, retrieve_scripts
     SCRIPTING_AGENT_AVAILABLE = True
+    print("✅ Scripting agent imported successfully")
 except ImportError as e:
     print(f"⚠️ Could not import scripting agent: {e}")
+    SCRIPTING_AGENT_AVAILABLE = False
 
 try:
     from chat_agent import run_chat_agent, handle_direct_routing
@@ -47,6 +52,7 @@ try:
     print("✅ Chat agent imported successfully")
 except ImportError as e:
     print(f"⚠️ Could not import chat agent: {e}")
+    CHAT_AGENT_AVAILABLE = False
     # Create a fallback function
     async def run_chat_agent(message):
         return f"""🤖 **Chat Agent - Fallback Mode**
@@ -755,8 +761,6 @@ async def human_review(state: ContentState) -> ContentState:
 async def chat_agent(state: ContentState) -> ContentState:
     """Main chat agent that handles all user interactions"""
     try:
-# Always try to process the message, even in fallback mode
-        
         # Get the last human message
         last_human_message = None
         if state.messages:
@@ -769,13 +773,54 @@ async def chat_agent(state: ContentState) -> ContentState:
             state.messages.append(AIMessage(content="No message found to process."))
             return state
         
-        # Run the chat agent (async)
-        response = await run_chat_agent(last_human_message)
+        message_lower = last_human_message.lower()
         
-        # Add response to messages
-        state.messages.append(AIMessage(content=response))
+        # Route to specific agents based on message content
+        if any(word in message_lower for word in ['search', 'find', 'news', 'latest', 'trending']):
+            # Route to search agent
+            print("🔍 Routing to search agent")
+            return await search_agent(state)
         
-        return state
+        elif any(word in message_lower for word in ['crawl', 'scrape', 'extract', 'article']) and 'http' in message_lower:
+            # Route to crawl agent  
+            print("🕷️ Routing to crawl agent")
+            return await crawl_and_store_agent(state)
+        
+        elif any(phrase in message_lower for phrase in ['generate script', 'create script', 'make script', 'script from']):
+            # Route to script generation agent
+            print("🎬 Routing to script generation agent")
+            return await script_generation_agent(state)
+        
+        elif any(phrase in message_lower for phrase in ['generate image', 'create image', 'make image', 'image generation', 'generate prompts']):
+            # Route to image generation workflow
+            print("🖼️ Routing to image generation workflow")
+            if PROMPT_IMAGE_AGENTS_AVAILABLE:
+                # If we have prompts, go to image generation, otherwise start with prompt generation
+                has_prompts = False
+                for output in reversed(state.phase_outputs):
+                    if output.phase_name == "prompt_generation" and output.status == "completed":
+                        has_prompts = True
+                        break
+                
+                if has_prompts:
+                    return await image_generation_agent(state)
+                else:
+                    return await prompt_generation_agent(state)
+            else:
+                state.messages.append(AIMessage(content="❌ Image generation agents not available. Please check imports."))
+                return state
+        
+        else:
+            # Use the chat agent for database queries and general help
+            print("💬 Using chat agent for general queries")
+            
+            # Run the chat agent (async)
+            response = await run_chat_agent(last_human_message)
+            
+            # Add response to messages
+            state.messages.append(AIMessage(content=response))
+            
+            return state
         
     except Exception as e:
         error_msg = f"❌ Error in chat agent: {str(e)}"
@@ -815,6 +860,16 @@ def create_workflow() -> StateGraph:
     
     # Add main chat agent
     workflow.add_node("chat_agent", chat_agent)
+    
+    # Add specific chat-routed agents
+    workflow.add_node("search_agent", search_agent)
+    workflow.add_node("crawl_and_store_agent", crawl_and_store_agent)
+    workflow.add_node("script_generation_agent", script_generation_agent)
+    
+    # Add direct image generation agents for chat routing
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        workflow.add_node("direct_prompt_generation", prompt_generation_agent)
+        workflow.add_node("direct_image_generation", image_generation_agent)
     
     # Add human review nodes
     review_phases = ["input_processing", "search_content_ideas", "research", "planning", "script_writing", "visual_generation"]
@@ -871,8 +926,16 @@ def create_workflow() -> StateGraph:
     
     workflow.add_edge("human_review_visual_generation", END)
     
-    # Add chat agent exit
+    # Add chat agent exits
     workflow.add_edge("chat_agent", END)
+    workflow.add_edge("search_agent", END)
+    workflow.add_edge("crawl_and_store_agent", END)
+    workflow.add_edge("script_generation_agent", END)
+    
+    # Add direct image generation exits
+    if PROMPT_IMAGE_AGENTS_AVAILABLE:
+        workflow.add_edge("direct_prompt_generation", END)
+        workflow.add_edge("direct_image_generation", END)
     
     return workflow
 

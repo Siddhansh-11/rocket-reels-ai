@@ -4,15 +4,21 @@ import os
 import asyncio
 import json
 from datetime import datetime
-import anthropic
+from langchain_community.chat_models import ChatLiteLLM
+from langchain_core.messages import HumanMessage
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv("../.env")
 
-# Initialize Anthropic client
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Initialize DeepSeek client
+deepseek_model = ChatLiteLLM(
+    model="deepseek/deepseek-chat",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    max_tokens=2000,
+    temperature=0.7
+)
 
 def get_supabase_client():
     """Get Supabase client with proper configuration."""
@@ -39,7 +45,7 @@ def generate_prompts_from_script(script_content: str, num_prompts: int = 5) -> s
     try:
         print(f"🎨 Generating {num_prompts} image prompts from script...")
         
-        # Generate prompts using Claude
+        # Generate prompts using DeepSeek
         prompt_generation_prompt = f"""
         You are an expert at creating detailed image generation prompts for social media reels/shorts.
         
@@ -73,20 +79,13 @@ def generate_prompts_from_script(script_content: str, num_prompts: int = 5) -> s
         
         # Generate prompts
         try:
-            response = anthropic_client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=2000,
-                messages=[{
-                    "role": "user",
-                    "content": prompt_generation_prompt
-                }]
-            )
+            response = deepseek_model.invoke([HumanMessage(content=prompt_generation_prompt)])
         except Exception as e:
-            print(f"❌ Error calling Anthropic API: {str(e)}")
+            print(f"❌ Error calling DeepSeek API: {str(e)}")
             return f"❌ Error generating prompts: {str(e)}"
         
         # Parse the response
-        prompts_text = response.content[0].text
+        prompts_text = response.content
         
         try:
             # Try to parse as JSON
