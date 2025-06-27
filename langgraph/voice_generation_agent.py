@@ -114,7 +114,7 @@ class VoiceGenerationAgent:
             # Get voice sample path if using custom voice
             audio_prompt_path = self._get_voice_sample_path(voice_name)
             
-            # Generate audio
+            # Generate audio with optimized parameters for speed and quality
             print(f"🎙️ Generating voice for: {text[:50]}...")
             if audio_prompt_path:
                 print(f"👤 Using voice sample: {audio_prompt_path}")
@@ -125,6 +125,7 @@ class VoiceGenerationAgent:
                     cfg_weight=cfg_weight
                 )
             else:
+                print("⚠️ Using default voice - consider using 'my_voice' for personalized results")
                 wav = self.model.generate(
                     text,
                     exaggeration=exaggeration,
@@ -257,6 +258,126 @@ async def generate_voiceover(
         return f"❌ Error in voiceover generation: {str(e)}"
 
 @tool
+async def generate_voiceover_with_upload(
+    script_text: str,
+    voice_name: str = "default",
+    emotion: str = "neutral",
+    script_title: str = "",
+    exaggeration: float = 0.5,
+    cfg_weight: float = 0.5
+) -> str:
+    """Generate voiceover and automatically upload to Google Drive using the working storage system.
+    
+    Args:
+        script_text: The text script to convert to speech
+        voice_name: Name of voice sample to use ("default" for base model)
+        emotion: Emotion style (neutral, dramatic, excited, calm, expressive)
+        script_title: Title for the script (used in folder naming)
+        exaggeration: Exaggeration level (0.0-1.0, higher = more expressive)
+        cfg_weight: CFG weight (0.0-1.0, lower = faster speech)
+    
+    Returns:
+        Complete workflow result with generation and upload status
+    """
+    try:
+        # Step 1: Generate voiceover
+        voice_result = await generate_voiceover(script_text, voice_name, emotion, exaggeration, cfg_weight)
+        
+        if "VOICEOVER GENERATED SUCCESSFULLY" not in voice_result:
+            return f"""
+❌ **VOICEOVER WORKFLOW FAILED**
+
+Voice generation failed:
+{voice_result}
+"""
+        
+        # Extract file path from the result
+        file_path = None
+        for line in voice_result.split('\n'):
+            if "Local Path:" in line:
+                file_path = line.split("Local Path:")[1].strip()
+                break
+        
+        if not file_path:
+            return f"""
+❌ **VOICEOVER WORKFLOW FAILED**
+
+Could not extract file path from voice generation result.
+"""
+        
+        # Step 2: Upload to Google Drive using the working storage system
+        try:
+            from gdrive_storage import initialize_gdrive_storage, save_voiceover_to_gdrive
+            
+            print("☁️ Uploading to Google Drive using working storage system...")
+            
+            # Initialize storage
+            storage = initialize_gdrive_storage()
+            
+            # Sanitize topic name for folder creation
+            sanitized_title = script_title.replace("'", "").replace('"', '').replace("/", "_").replace("\\", "_")
+            if len(sanitized_title) > 50:
+                sanitized_title = sanitized_title[:50]
+            
+            # Upload using the working save_voiceover_to_gdrive function
+            file_id = save_voiceover_to_gdrive(
+                file_path, 
+                storage, 
+                topic_name=sanitized_title if sanitized_title else "voice_generation"
+            )
+            
+            # Generate shareable links
+            shareable_link = f"https://drive.google.com/file/d/{file_id}/view"
+            download_link = f"https://drive.google.com/uc?export=download&id={file_id}"
+            
+            return f"""
+🎬 **COMPLETE VOICEOVER WORKFLOW SUCCESSFUL**
+
+{voice_result}
+
+☁️ **GOOGLE DRIVE UPLOAD SUCCESSFUL**
+
+**📁 Folder:** voiceover/{sanitized_title if sanitized_title else 'voice_generation'}
+**📄 Filename:** {os.path.basename(file_path)}
+**🆔 File ID:** {file_id}
+
+**🔗 Links:**
+- **View:** {shareable_link}
+- **Download:** {download_link}
+
+**📊 Metadata:**
+- Voice: {voice_name}
+- Script: {script_title}
+- Emotion: {emotion}
+
+✅ **Complete workflow successful!** Voice file is now accessible in Google Drive and ready for use in video production.
+"""
+            
+        except Exception as e:
+            return f"""
+🎙️ **VOICEOVER GENERATED SUCCESSFULLY**
+
+{voice_result}
+
+❌ **GOOGLE DRIVE UPLOAD FAILED**
+
+**Error:** {str(e)}
+
+**💡 Troubleshooting:**
+1. Voice file is saved locally at: {file_path}
+2. You can manually upload to Google Drive
+3. Check if image uploads are working (they use the same system)
+
+**📝 Manual Upload:**
+1. Go to Google Drive
+2. Navigate to voiceover folder
+3. Upload: {os.path.basename(file_path)}
+"""
+            
+    except Exception as e:
+        return f"❌ Error in complete voiceover workflow: {str(e)}"
+
+@tool
 async def list_available_voices() -> str:
     """List all available voice samples for voice cloning.
     
@@ -301,5 +422,62 @@ async def list_available_voices() -> str:
     except Exception as e:
         return f"❌ Error listing voices: {str(e)}"
 
-# Create voice agent tools list
-voice_tools = [generate_voiceover, list_available_voices]
+@tool
+async def list_gdrive_voice_files() -> str:
+    """List voice files in Google Drive using the working storage system."""
+    try:
+        from gdrive_storage import initialize_gdrive_storage
+        
+        storage = initialize_gdrive_storage()
+        if not storage:
+            return "❌ Failed to initialize Google Drive storage"
+        
+        # List files in voiceover folder
+        folder_id = storage.folder_ids.get('voiceover')
+        if not folder_id:
+            return "❌ Voiceover folder not found"
+        
+        results = storage.service.files().list(
+            q=f"'{folder_id}' in parents",
+            fields="files(id, name, createdTime, size, webViewLink)"
+        ).execute()
+        
+        files = results.get('files', [])
+        
+        if not files:
+            return """
+📁 **VOICEOVER FOLDER IS EMPTY**
+
+No voice files found in Google Drive.
+Use `generate_voiceover_with_upload` to generate and upload voices.
+"""
+        
+        file_list = []
+        for file in files:
+            size_mb = int(file.get('size', 0)) / (1024 * 1024) if file.get('size') else 0
+            created = file.get('createdTime', '')[:10]
+            
+            file_info = f"""
+**📄 {file['name']}**
+- Created: {created}
+- Size: {size_mb:.1f}MB
+- Link: {file['webViewLink']}
+"""
+            file_list.append(file_info)
+        
+        return f"""
+☁️ **GOOGLE DRIVE VOICE FILES**
+
+**📁 Folder:** voiceover
+**📊 Total Files:** {len(files)}
+
+{chr(10).join(file_list)}
+
+✅ **Access your voice files anytime via Google Drive!**
+"""
+        
+    except Exception as e:
+        return f"❌ Error listing files: {str(e)}"
+
+# Create voice agent tools list with the new integrated upload function
+voice_tools = [generate_voiceover, generate_voiceover_with_upload, list_available_voices, list_gdrive_voice_files]

@@ -17,6 +17,9 @@ from prompt_generation_agent import prompt_generation_tools
 from image_generation_agent import image_generation_tools
 from video_prompt_generation_agent import VideoPromptGenerationAgent
 from video_generation_agent import VideoGenerationAgent
+from voice_generation_agent import voice_tools
+# from gdrive_voice_storage import gdrive_voice_tools  # REMOVED - integrated into gdrive_storage.py
+from voice_cloning_setup import voice_cloning_tools
 
 # Load environment variables
 load_dotenv("../.env")
@@ -95,6 +98,15 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 - Creates smooth transitions between images with natural motion flow
 - Combines segments into final video ready for social media platforms
 
+🎙️ **VOICE GENERATION FUNCTION:**
+- Converts script text to high-quality speech using Chatterbox TTS
+- Supports voice cloning with custom voice samples for personalized narration
+- Offers emotion control (neutral, dramatic, excited, calm, expressive)
+- Advanced parameters for exaggeration and speech speed control
+- Automatic Google Drive upload for easy access and sharing
+- Voice sample setup and quality analysis for optimal cloning results
+- Professional-grade watermarked audio output with Perth technology
+
 📋 **WORKFLOW PROCESS:**
 
 **PHASE 1 - SEARCH & DISCOVERY:**
@@ -159,6 +171,14 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 31. Combine all segments into final video ready for social media publishing
 32. Store generated videos in database with metadata and file paths
 
+**PHASE 9 - VOICE GENERATION:**
+33. Convert generated scripts to professional voiceover using Chatterbox TTS
+34. Support voice cloning with user's custom voice samples for personalized content
+35. Apply emotion control and speech parameters for optimal delivery
+36. Automatically upload voice files to Google Drive for easy access
+37. Provide voice quality analysis and setup assistance for custom voices
+38. Generate watermarked audio files for responsible AI usage
+
 🎯 **SPECIAL CAPABILITIES:**
 
 **DATABASE RETRIEVAL:**
@@ -189,6 +209,14 @@ You are Rocket Reels AI News Research Assistant - a specialized agent for discov
 - Extract visual cues with extract_visual_cues_from_timing()
 - Generate images for key scenes with generate_from_visual_timing()
 - Present a comprehensive visual and script package
+
+**VOICE GENERATION CAPABILITIES:**
+- Generate voiceover from scripts using generate_voiceover()
+- List available voice samples with list_available_voices()
+- Setup custom voice cloning with setup_voice_sample()
+- Analyze voice quality before setup with analyze_voice_quality()
+- Upload voice files to Google Drive with upload_voice_to_gdrive()
+- Complete voice workflow with automatic upload using complete_voice_workflow()
 
 ⚠️ **CRITICAL ERROR HANDLING GUARDRAILS:**
 
@@ -233,7 +261,9 @@ Ready to find and transform the next viral tech story into production-ready cont
 """
 
 # Combine all available tools
-all_tools = search_tools + crawl_tools + supabase_tools_sync_wrapped + prompt_generation_tools + image_generation_tools
+all_tools = (search_tools + crawl_tools + supabase_tools_sync_wrapped + 
+             prompt_generation_tools + image_generation_tools + 
+             voice_tools + voice_cloning_tools)
 
 # Create the agent with comprehensive tools
 agent = create_react_agent(
@@ -756,6 +786,69 @@ async def process_selection(urls_to_crawl: list, platform: str):
                 print(f"   • Video prompts: {len(video_prompt_result['video_prompts'])} generated (ready for video creation)")
             else:
                 print(f"   • Video: Available for manual creation using generated images")
+            
+            # Phase 9: Voice Generation (Optional)
+            print("\n🎙️ Generating voiceover for the script...")
+            try:
+                from voice_generation_agent import generate_voiceover
+                # from gdrive_voice_storage import upload_voice_to_gdrive
+                
+                # Clean script text for voice generation
+                clean_script = script.replace("**", "").replace("*", "")
+                clean_script = clean_script.replace("HOOK:", "").replace("ACT 1:", "").replace("ACT 2:", "").replace("ACT 3:", "")
+                clean_script = clean_script.replace("CONCLUSION/CTA:", "").replace("CTA:", "")
+                clean_script = " ".join(clean_script.split())
+                
+                if len(clean_script) > 5000:
+                    clean_script = clean_script[:5000] + "..."
+                
+                # Generate voiceover
+                voice_result = await generate_voiceover(
+                    script_text=clean_script,
+                    voice_name="my_voice",  # Use the custom voice processed earlier
+                    emotion="neutral",
+                    exaggeration=0.5,      # More natural, less exaggerated
+                    cfg_weight=0.5         # Balanced speech speed
+                )
+                
+                if "VOICEOVER GENERATED SUCCESSFULLY" in voice_result:
+                    print("✅ Voiceover generated successfully")
+                    
+                    # Extract file path for upload
+                    lines = voice_result.split('\n')
+                    voice_file_path = None
+                    for line in lines:
+                        if "Local Path:" in line:
+                            voice_file_path = line.split("Local Path:")[1].strip()
+                            break
+                    
+                    # Upload to Google Drive using integrated gdrive_storage
+                    if voice_file_path:
+                        try:
+                            from gdrive_storage import initialize_gdrive_storage
+                            storage = initialize_gdrive_storage()
+                            
+                            # Upload voice file to Google Drive voiceover folder
+                            file_id = storage.upload_file(
+                                voice_file_path, 
+                                'voiceover', 
+                                topic_name=article_data.get('title', 'Tech News Script')
+                            )
+                            
+                            if file_id:
+                                print("✅ Voice uploaded to Google Drive")
+                                print(f"📁 File ID: {file_id}")
+                            else:
+                                print("⚠️ Voice generated but upload to Google Drive failed")
+                        except Exception as e:
+                            print(f"⚠️ Voice upload error: {str(e)}")
+                            print("💡 Voice file saved locally, upload to Google Drive manually if needed")
+                else:
+                    print(f"⚠️ Voice generation failed or incomplete")
+                    
+            except Exception as e:
+                print(f"⚠️ Voice generation error: {str(e)}")
+                print("💡 Voice generation is optional - content creation can continue without it")
             
             # Store the script in Supabase
             from supabase_agent import store_script_content
