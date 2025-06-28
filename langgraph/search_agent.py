@@ -25,8 +25,10 @@ async def search_trending_tech_news(query: str = "latest trending tech news") ->
         Formatted list of trending tech news with URLs and summaries
     """
     try:
-        # Enhanced search query for individual articles - exclude aggregated content and topic pages
-        search_query = f"{query} {datetime.now().strftime('%Y')} technology breaking news -\"roundup\" -\"wrap up\" -\"top 25\" -\"25 news\" -\"news digest\" -\"weekly roundup\" -\"daily digest\" -\"section\" -\"topic\" -\"category\" -\"/technology/\" -\"/tech/\" site:techcrunch.com OR site:theverge.com OR site:wired.com OR site:arstechnica.com OR site:engadget.com"
+        # Enhanced search query for recent individual articles - exclude aggregated content and old articles
+        current_date = datetime.now()
+        yesterday = current_date.strftime('%Y-%m-%d')
+        search_query = f"{query} {current_date.strftime('%Y')} technology breaking news after:{yesterday} -\"roundup\" -\"wrap up\" -\"top 25\" -\"25 news\" -\"news digest\" -\"weekly roundup\" -\"daily digest\" -\"section\" -\"topic\" -\"category\" -\"/technology/\" -\"/tech/\" site:techcrunch.com OR site:theverge.com OR site:arstechnica.com OR site:engadget.com"
         print(f"🔍 Searching for: {search_query}")
         
         # Perform search
@@ -41,7 +43,7 @@ async def search_trending_tech_news(query: str = "latest trending tech news") ->
         # Clean URLs and filter out aggregated content
         clean_urls = []
         official_sources = [
-            'techcrunch.com', 'theverge.com', 'wired.com', 'arstechnica.com',
+            'techcrunch.com', 'theverge.com', 'arstechnica.com',
             'engadget.com', 'zdnet.com', 'cnet.com', 'reuters.com/technology',
             'bloomberg.com/technology', 'wsj.com/tech', 'venturebeat.com',
             'apple.com/newsroom', 'microsoft.com/news', 'google.com/press',
@@ -66,8 +68,9 @@ async def search_trending_tech_news(query: str = "latest trending tech news") ->
                 # Check if it's not an aggregated article or topic page
                 if not any(term in url.lower() for term in aggregated_terms):
                     # Prefer URLs that look like individual articles (have dates, titles, or article indicators)
-                    article_indicators = ['/2025/', '/2024/', '/article/', '/story/', '/news/', '-', '_']
-                    if any(indicator in url for indicator in article_indicators):
+                    current_year = datetime.now().strftime('/%Y/')
+                    recent_indicators = [current_year, '/article/', '/story/', '/news/', '-', '_']
+                    if any(indicator in url for indicator in recent_indicators):
                         if url not in clean_urls:
                             clean_urls.append(url)
         
@@ -78,8 +81,9 @@ async def search_trending_tech_news(query: str = "latest trending tech news") ->
                 # Skip aggregated content URLs and topic pages
                 if not any(term in url.lower() for term in aggregated_terms):
                     # Only add URLs that look like individual articles
-                    article_indicators = ['/2025/', '/2024/', '/article/', '/story/', '/news/', '-', '_']
-                    if any(indicator in url for indicator in article_indicators):
+                    current_year = datetime.now().strftime('/%Y/')
+                    recent_indicators = [current_year, '/article/', '/story/', '/news/', '-', '_']
+                    if any(indicator in url for indicator in recent_indicators):
                         if url not in clean_urls and len(url) > 10:
                             clean_urls.append(url)
                         if len(clean_urls) >= 8:
@@ -136,7 +140,7 @@ async def extract_article_urls(search_results: str) -> List[str]:
         # Clean and filter URLs - prioritize official sources
         clean_urls = []
         official_sources = [
-            'techcrunch.com', 'theverge.com', 'wired.com', 'arstechnica.com',
+            'techcrunch.com', 'theverge.com', 'arstechnica.com',
             'engadget.com', 'zdnet.com', 'cnet.com', 'reuters.com/technology',
             'bloomberg.com/technology', 'wsj.com/tech', 'venturebeat.com',
             'apple.com/newsroom', 'microsoft.com/news', 'google.com/press',
@@ -161,8 +165,9 @@ async def extract_article_urls(search_results: str) -> List[str]:
                 # Check if it's not an aggregated article or topic page
                 if not any(term in url.lower() for term in aggregated_terms):
                     # Prefer URLs that look like individual articles (have dates, titles, or article indicators)
-                    article_indicators = ['/2025/', '/2024/', '/article/', '/story/', '/news/', '-', '_']
-                    if any(indicator in url for indicator in article_indicators):
+                    current_year = datetime.now().strftime('/%Y/')
+                    recent_indicators = [current_year, '/article/', '/story/', '/news/', '-', '_']
+                    if any(indicator in url for indicator in recent_indicators):
                         if url not in clean_urls:
                             clean_urls.append(url)
         
@@ -173,8 +178,9 @@ async def extract_article_urls(search_results: str) -> List[str]:
                 # Skip aggregated content URLs and topic pages
                 if not any(term in url.lower() for term in aggregated_terms):
                     # Only add URLs that look like individual articles
-                    article_indicators = ['/2025/', '/2024/', '/article/', '/story/', '/news/', '-', '_']
-                    if any(indicator in url for indicator in article_indicators):
+                    current_year = datetime.now().strftime('/%Y/')
+                    recent_indicators = [current_year, '/article/', '/story/', '/news/', '-', '_']
+                    if any(indicator in url for indicator in recent_indicators):
                         if url not in clean_urls and len(url) > 10:
                             clean_urls.append(url)
                         if len(clean_urls) >= 8:

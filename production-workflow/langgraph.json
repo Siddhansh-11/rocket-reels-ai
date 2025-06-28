@@ -1,0 +1,8 @@
+
+{
+  "dependencies": ["."],
+  "graphs": {
+    "production_workflow": "./core/production_workflow.py:production_workflow"
+  },
+  "env": ".env"
+}
