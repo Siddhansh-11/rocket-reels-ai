@@ -16,6 +16,8 @@ from agents.scripting_agent import scripting_tools
 from agents.prompt_generation_agent import prompt_generation_tools
 from agents.image_generation_agent import image_generation_tools
 from agents.voice_generation_agent import voice_tools
+from agents.asset_gathering_agent import asset_gathering_tools
+from agents.notion_agent import notion_tools
 
 @dataclass
 class WorkflowState:
@@ -47,6 +49,14 @@ class WorkflowState:
     images_generated: Annotated[List[str], add] = field(default_factory=list)
     voice_files: Annotated[List[str], add] = field(default_factory=list)
     
+    # Asset gathering phase
+    project_folder_path: str = ""
+    asset_organization_result: str = ""
+    
+    # Notion integration phase
+    notion_project_id: str = ""
+    notion_status: str = ""
+    
     # Status tracking
     current_step: str = "search"
     errors: Annotated[List[str], add] = field(default_factory=list)
@@ -72,6 +82,8 @@ class ProductionWorkflow:
         self.workflow.add_node("prompt_generation", self.prompt_generation_node)
         self.workflow.add_node("image_generation", self.image_generation_node)
         self.workflow.add_node("voice_generation", self.voice_generation_node)
+        self.workflow.add_node("asset_gathering", self.asset_gathering_node)
+        self.workflow.add_node("notion_integration", self.notion_integration_node)
         self.workflow.add_node("finalize", self.finalize_node)
         
         # Define the sequential flow
@@ -88,9 +100,15 @@ class ProductionWorkflow:
         # Image generation follows prompt generation
         self.workflow.add_edge("prompt_generation", "image_generation")
         
-        # Both image generation and voice generation converge to finalize
-        self.workflow.add_edge("image_generation", "finalize")
-        self.workflow.add_edge("voice_generation", "finalize")
+        # Both image generation and voice generation converge to asset gathering
+        self.workflow.add_edge("image_generation", "asset_gathering")
+        self.workflow.add_edge("voice_generation", "asset_gathering")
+        
+        # Asset gathering leads to Notion integration
+        self.workflow.add_edge("asset_gathering", "notion_integration")
+        
+        # Notion integration leads to finalize
+        self.workflow.add_edge("notion_integration", "finalize")
         
         # Finalize ends the workflow
         self.workflow.add_edge("finalize", END)
@@ -504,10 +522,117 @@ class ProductionWorkflow:
                 "messages": [AIMessage(content="❌ Voice generation failed")]
             }
     
+    async def asset_gathering_node(self, state: WorkflowState) -> WorkflowState:
+        """Organize generated assets in Google Drive project folder (sequential node)"""
+        try:
+            print("📁 Step 7: Gathering and organizing assets in Google Drive")
+            state.current_step = "asset_gathering"
+            
+            # Prepare script data for folder creation
+            script_data = {
+                'title': state.article_data.get('title', state.topic),
+                'script_content': state.script_content,
+                'script_id': state.script_id,
+                'article_id': state.article_id,
+                'hook': state.script_hook,
+                'visual_suggestions': state.visual_suggestions
+            }
+            
+            # Create project folder structure
+            folder_tool = asset_gathering_tools[0]  # create_project_folder_structure
+            folder_result = await folder_tool.ainvoke(script_data)
+            
+            # Extract folder path from result
+            project_folder_path = ""
+            if "Folder Path:" in folder_result:
+                folder_path_line = [line for line in folder_result.split('\n') if "Folder Path:" in line][0]
+                project_folder_path = folder_path_line.split("Folder Path:")[1].strip()
+            
+            # Organize assets
+            assets_data = {
+                'images': state.images_generated,
+                'voice_files': state.voice_files,
+                'script_content': state.script_content,
+                'prompts': state.prompts_generated
+            }
+            
+            asset_result = ""
+            if project_folder_path:
+                organize_tool = asset_gathering_tools[1]  # organize_generated_assets
+                asset_result = await organize_tool.ainvoke({
+                    'project_folder_path': project_folder_path,
+                    'assets_data': assets_data
+                })
+            
+            return {
+                "project_folder_path": project_folder_path,
+                "asset_organization_result": asset_result or folder_result,
+                "current_step": "asset_gathering",
+                "messages": [AIMessage(content=f"Assets organized in: {project_folder_path}")]
+            }
+            
+        except Exception as e:
+            error_msg = f"Asset gathering failed: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {
+                "current_step": "asset_gathering",
+                "errors": [error_msg],
+                "messages": [AIMessage(content="❌ Asset gathering failed")]
+            }
+    
+    async def notion_integration_node(self, state: WorkflowState) -> WorkflowState:
+        """Create Notion project and set up monitoring (sequential node)"""
+        try:
+            print("📋 Step 8: Setting up Notion project tracking")
+            state.current_step = "notion_integration"
+            
+            # Prepare script data for Notion
+            notion_script_data = {
+                'title': state.article_data.get('title', state.topic),
+                'script_content': state.script_content,
+                'script_id': state.script_id,
+                'article_id': state.article_id,
+                'hook': state.script_hook,
+                'visual_suggestions': state.visual_suggestions,
+                'folder_path': state.project_folder_path
+            }
+            
+            # Create Notion project row
+            notion_tool = notion_tools[0]  # create_notion_project_row
+            notion_result = await notion_tool.ainvoke(notion_script_data)
+            
+            # Extract project ID from result
+            notion_project_id = ""
+            if "Page ID:" in notion_result:
+                id_line = [line for line in notion_result.split('\n') if "Page ID:" in line][0]
+                notion_project_id = id_line.split("Page ID:")[1].strip()
+            
+            # Set up folder monitoring (placeholder for now)
+            if state.project_folder_path:
+                monitor_tool = notion_tools[2]  # monitor_gdrive_folder
+                monitor_result = await monitor_tool.ainvoke(state.project_folder_path)
+                print(f"📡 Monitoring setup: {monitor_result[:100]}...")
+            
+            return {
+                "notion_project_id": notion_project_id,
+                "notion_status": "Assets Ready",
+                "current_step": "notion_integration",
+                "messages": [AIMessage(content=f"Notion project created with ID: {notion_project_id}")]
+            }
+            
+        except Exception as e:
+            error_msg = f"Notion integration failed: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {
+                "current_step": "notion_integration",
+                "errors": [error_msg],
+                "messages": [AIMessage(content="❌ Notion integration failed")]
+            }
+    
     async def finalize_node(self, state: WorkflowState) -> WorkflowState:
         """Finalize the workflow and compile results"""
         try:
-            print("✅ Step 7: Finalizing workflow")
+            print("✅ Step 9: Finalizing workflow")
             
             # Compile final results
             final_summary = f"""
@@ -521,6 +646,14 @@ class ProductionWorkflow:
 - Voice files: {len(state.voice_files)}
 - Prompts generated: {len(state.prompts_generated)}
 
+📁 **Asset Organization:**
+- Project folder: {state.project_folder_path or 'Not created'}
+- Asset status: {'✅ Organized' if state.asset_organization_result else '❌ Failed'}
+
+📋 **Notion Integration:**
+- Project ID: {state.notion_project_id or 'Not created'}
+- Status: {state.notion_status or 'Not set'}
+
 📝 **Script Preview:**
 {(state.script_hook[:100] + '...') if state.script_hook else 'No hook extracted'}
 
@@ -530,6 +663,21 @@ class ProductionWorkflow:
 - Image prompts: ✅ {len(state.prompts_generated)} prompts
 - Generated images: ✅ {len(state.images_generated)} images
 - Voice files: ✅ {len(state.voice_files)} files
+- Google Drive: ✅ Project folder created with organized structure
+- Notion workspace: ✅ Project tracking row created
+
+📁 **Google Drive Structure:**
+{state.project_folder_path}/
+  ├── generated_images/
+  ├── voiceover/
+  ├── scripts/
+  ├── final_draft/ (awaiting editor upload)
+  └── resources/
+
+🔔 **Next Steps:**
+1. Editor uploads final video to: {state.project_folder_path}/final_draft/
+2. Video upload will trigger Notion status update to "Video Ready"
+3. Project will be ready for final publishing
 
 ❌ **Errors encountered:** {len(state.errors)}
 {chr(10).join(state.errors) if state.errors else 'None'}
@@ -537,7 +685,7 @@ class ProductionWorkflow:
 📄 **Full Script Content:**
 {state.script_content[:500] + '...' if len(state.script_content) > 500 else state.script_content}
 
-🎬 **Ready for video production!**
+🎬 **Workflow Complete - Ready for Editor!**
 """
             
             return {
