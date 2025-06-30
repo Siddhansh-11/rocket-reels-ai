@@ -1,18 +1,80 @@
-# Production Workflow Dependencies
-langgraph>=0.2.0
+# Core Workflow Dependencies
+langgraph>=0.2.34
+langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-community>=0.3.0
-supabase>=2.0.0
+langchain-anthropic>=0.2.0
+
+# State Management & Async
+pydantic>=2.5.0
+asyncio-compat>=0.1.0
+dataclasses-json>=0.6.0
+
+# Database & Storage
+supabase>=2.3.0
+httpx>=0.27.0
+
+# Environment & Configuration
 python-dotenv>=1.0.0
-httpx>=0.25.0
-beautifulsoup4>=4.12.0
+python-decouple>=3.8
+
+# Web Scraping & Content
+beautifulsoup4>=4.12.2
+requests>=2.31.0
+html2text>=2024.2.26
+newspaper3k>=0.2.8
+
+# AI & ML APIs
+anthropic>=0.34.0
 mistralai>=1.0.0
-asyncio
-dataclasses
-typing
-datetime
-json
-re
-hashlib
-os
-random
+openai>=1.51.0
+together>=1.0.0
+
+# Search & Research
+tavily-python>=0.3.0
+duckduckgo-search>=6.2.0
+
+# Google Services
+google-api-python-client>=2.108.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+google-auth>=2.29.0
+
+# Notion Integration
+notion-client>=2.2.1
+
+# Image & Media Processing
+Pillow>=10.2.0
+requests-toolbelt>=1.0.0
+
+# Voice & Audio (Optional)
+elevenlabs>=1.0.0
+pydub>=0.25.1
+
+# Utilities
+colorama>=0.4.6
+tqdm>=4.66.0
+rich>=13.7.0
+
+# Development & Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.0.0
+flake8>=7.0.0
+
+# Date & Time
+python-dateutil>=2.8.2
+
+# JSON & Data
+ujson>=5.9.0
+orjson>=3.9.0
+
+# Concurrent Processing
+aiofiles>=23.2.1
+aiohttp>=3.9.0
+
+# Monitoring & Logging
+structlog>=24.1.0
+
+# Type Hints & Validation
+typing-extensions>=4.9.0
