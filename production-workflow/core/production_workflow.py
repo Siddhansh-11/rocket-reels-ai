@@ -114,25 +114,26 @@ class ProductionWorkflow:
         self.workflow.add_edge("finalize", END)
     
     async def search_node(self, state: WorkflowState) -> WorkflowState:
-        """Search for trending tech news"""
+        """Search for trending tech news using intelligent AI-powered search"""
         try:
-            print(f"🔍 Step 1: Searching for articles about '{state.topic}'")
+            print(f"🔍 Step 1: Intelligent search for articles about '{state.topic}'")
             state.current_step = "search"
             
-            # Use search agent to find articles
-            search_tool = search_tools[0]  # search_trending_tech_news
-            search_results = await search_tool.ainvoke(state.topic or "latest trending tech news")
+            # Use intelligent search tool
+            search_tool = search_tools[0]  # search_tech_news
+            search_query = state.topic or "latest trending tech news"
+            search_results = await search_tool.ainvoke(search_query)
             
             # Extract URLs for next step
             url_extraction_tool = search_tools[1]  # extract_article_urls
             urls = await url_extraction_tool.ainvoke(search_results)
-            search_urls = urls[:3]  # Take top 3 URLs
+            search_urls = urls[:8] if len(urls) >= 8 else urls
             
             return {
                 "search_results": search_results,
                 "search_urls": search_urls,
                 "current_step": "search",
-                "messages": [AIMessage(content=f"Found {len(search_urls)} articles to crawl")]
+                "messages": [AIMessage(content=f"Found {len(search_urls)} high-quality standalone articles")]
             }
             
         except Exception as e:
