@@ -98,9 +98,23 @@ class ProductionWorkflow:
         # Image generation follows prompt generation
         self.workflow.add_edge("prompt_generation", "image_generation")
         
-        # Both image generation and voice generation converge to asset gathering
-        self.workflow.add_edge("image_generation", "asset_gathering")
-        self.workflow.add_edge("voice_generation", "asset_gathering")
+        # Conditional edge: asset_gathering only runs after both image_generation and voice_generation complete
+        self.workflow.add_conditional_edges(
+            "image_generation",
+            lambda state: "asset_gathering" if state.voice_files else "wait_for_voice",
+            {
+                "asset_gathering": "asset_gathering",
+                "wait_for_voice": "voice_generation"
+            }
+        )
+        self.workflow.add_conditional_edges(
+            "voice_generation",
+            lambda state: "asset_gathering" if state.images_generated else "wait_for_images",
+            {
+                "asset_gathering": "asset_gathering",
+                "wait_for_images": "image_generation"
+            }
+        )
         
         # Asset gathering leads to Notion integration
         self.workflow.add_edge("asset_gathering", "notion_integration")
@@ -114,40 +128,36 @@ class ProductionWorkflow:
     async def prompt_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate prompts for image generation (parallel node)"""
         try:
-            print("🎨 Step 6a: Generating image prompts (parallel)")
+            print("Step 6a: Generating image prompts (parallel)")
             
             if not state.script_content:
-                print("⚠️ No script content available for prompt generation")
+                print("No script content available for prompt generation")
                 return {
                     "prompts_generated": [],
-                    "messages": [AIMessage(content="⚠️ No script content available for prompt generation")]
+                    "messages": [AIMessage(content="No script content available for prompt generation")]
                 }
             
-            # Use the prompt generation tool
             prompt_tool = prompt_generation_tools[0]  # generate_prompts_from_script
             
-            print(f"🔍 DEBUG - Script content length: {len(state.script_content)} characters")
-            print(f"🔍 DEBUG - Script preview: {state.script_content[:200]}...")
+            print(f"DEBUG - Script content length: {len(state.script_content)} characters")
+            print(f"DEBUG - Script preview: {state.script_content[:200]}...")
             
-            # Call the tool to generate prompts
             prompts_result = await prompt_tool.ainvoke({
                 "script_content": state.script_content,
                 "num_prompts": 5
             })
             
-            print(f"🔍 DEBUG - Generated {len(prompts_result)} prompts")
+            print(f"DEBUG - Generated {len(prompts_result)} prompts")
             for i, prompt in enumerate(prompts_result[:3], 1):
                 print(f"  {i}. {prompt.get('visual_description', 'No description')[:50]}...")
             
-            # If no prompts were generated, log error
             if not prompts_result:
-                print("⚠️ No prompts generated from script")
+                print("No prompts generated from script")
                 return {
                     "prompts_generated": [],
-                    "messages": [AIMessage(content="⚠️ Failed to generate prompts from script")]
+                    "messages": [AIMessage(content="Failed to generate prompts from script")]
                 }
             
-            # Convert prompts to the expected format for the workflow
             generated_prompts = [
                 {
                     "id": prompt["id"],
@@ -158,7 +168,7 @@ class ProductionWorkflow:
                 } for prompt in prompts_result
             ]
             
-            print(f"✅ Generated {len(generated_prompts)} prompts for image generation")
+            print(f"Generated {len(generated_prompts)} prompts for image generation")
             
             return {
                 "prompts_generated": generated_prompts,
@@ -167,19 +177,17 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Prompt generation failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "errors": [error_msg],
                 "prompts_generated": [],
-                "messages": [AIMessage(content="❌ LLM prompt generation failed")]
+                "messages": [AIMessage(content="LLM prompt generation failed")]
             }
 
-    # Other methods (search_node, crawl_node, etc.) remain unchanged
-    # Include only the necessary methods for context
     async def search_node(self, state: WorkflowState) -> WorkflowState:
         """Search for trending tech news using intelligent AI-powered search"""
         try:
-            print(f"🔍 Step 1: Intelligent search for articles about '{state.topic}'")
+            print(f"Step 1: Intelligent search for articles about '{state.topic}'")
             state.current_step = "search"
             
             search_tool = search_tools[0]  # search_tech_news
@@ -199,17 +207,17 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Search failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "search",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Search failed")]
+                "messages": [AIMessage(content="Search failed")]
             }
     
     async def crawl_node(self, state: WorkflowState) -> WorkflowState:
         """Crawl the selected article"""
         try:
-            print("🕷️ Step 2: Crawling article content")
+            print("Step 2: Crawling article content")
             state.current_step = "crawl"
             
             if not state.search_urls:
@@ -250,17 +258,17 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Crawling failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "crawl",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Crawling failed")]
+                "messages": [AIMessage(content="Crawling failed")]
             }
     
     async def store_article_node(self, state: WorkflowState) -> WorkflowState:
         """Store article in Supabase"""
         try:
-            print("🗄️ Step 3: Storing article in Supabase")
+            print("Step 3: Storing article in Supabase")
             state.current_step = "store_article"
             
             if not state.article_data:
@@ -268,8 +276,8 @@ class ProductionWorkflow:
             
             storage_tool = supabase_tools_sync_wrapped[0]  # store_article_content_sync_wrapped
             
-            print(f"🔍 DEBUG - Article data type: {type(state.article_data)}")
-            print(f"🔍 DEBUG - Article data keys: {list(state.article_data.keys()) if isinstance(state.article_data, dict) else 'Not a dict'}")
+            print(f"DEBUG - Article data type: {type(state.article_data)}")
+            print(f"DEBUG - Article data keys: {list(state.article_data.keys()) if isinstance(state.article_data, dict) else 'Not a dict'}")
             
             storage_result = await asyncio.to_thread(storage_tool.invoke, {"article_data": state.article_data})
             
@@ -283,7 +291,7 @@ class ProductionWorkflow:
                 if id_match:
                     article_id = id_match.group(1)
             
-            print(f"🔍 DEBUG - Extracted article ID: '{article_id}'")
+            print(f"DEBUG - Extracted article ID: '{article_id}'")
             
             return {
                 "storage_result": storage_result,
@@ -294,30 +302,30 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Article storage failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "store_article",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Article storage failed")]
+                "messages": [AIMessage(content="Article storage failed")]
             }
     
     async def generate_script_node(self, state: WorkflowState) -> WorkflowState:
         """Generate script content from article data"""
         try:
-            print("📝 Step 4: Generating script content")
+            print("Step 4: Generating script content")
             
             if not state.article_data:
                 return {
                     "errors": ["No article data available for script generation"],
                     "current_step": "script_failed",
-                    "messages": [AIMessage(content="❌ No article data for script generation")],
+                    "messages": [AIMessage(content="No article data for script generation")],
                 }
             
             article_data = state.article_data
             article_title = article_data.get("title", "") if isinstance(article_data, dict) else ""
             article_content = article_data.get("content", "") if isinstance(article_data, dict) else ""
             
-            print(f"🔍 Generating script from:")
+            print(f"Generating script from:")
             print(f"  - Title: {article_title[:100]}...")
             print(f"  - Content: {len(article_content)} characters")
             
@@ -325,7 +333,7 @@ class ProductionWorkflow:
                 return {
                     "errors": ["Article data exists but contains no title or content"],
                     "current_step": "script_failed",
-                    "messages": [AIMessage(content="❌ Article data is empty")],
+                    "messages": [AIMessage(content="Article data is empty")],
                 }
             
             script_tool = script_generation_tools[0]  # generate_youtube_script
@@ -336,7 +344,7 @@ class ProductionWorkflow:
                 "duration": 60
             })
             
-            print(f"📝 Script generation result: {script_result[:200]}...")
+            print(f"Script generation result: {script_result[:200]}...")
             
             script_content = ""
             script_hook = ""
@@ -355,8 +363,8 @@ class ProductionWorkflow:
             if not script_content:
                 script_content = script_result
             
-            print(f"✅ Extracted script: {len(script_content)} characters")
-            print(f"✅ Extracted hook: {script_hook[:50]}...")
+            print(f"Extracted script: {len(script_content)} characters")
+            print(f"Extracted hook: {script_hook[:50]}...")
             
             return {
                 "script_content": script_content,
@@ -367,24 +375,24 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Script generation failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "errors": [error_msg],
                 "current_step": "script_failed",
-                "messages": [AIMessage(content="❌ Script generation failed")],
+                "messages": [AIMessage(content="Script generation failed")],
             }
     
     async def store_script_node(self, state: WorkflowState) -> WorkflowState:
         """Store generated script in Supabase"""
         try:
-            print("🗄️ Step 5: Storing script in Supabase")
+            print("Step 5: Storing script in Supabase")
             state.current_step = "store_script"
             
             if not state.script_content:
                 raise Exception("Missing script content for storage")
             
             article_id = state.article_id if state.article_id else "unknown"
-            print(f"🔍 DEBUG - Using article ID for script: '{article_id}'")
+            print(f"DEBUG - Using article ID for script: '{article_id}'")
             
             script_data = {
                 "article_id": article_id,
@@ -414,34 +422,38 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Script storage failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "store_script",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Script storage failed")]
+                "messages": [AIMessage(content="Script storage failed")]
             }
     
     async def image_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate images from prompts (parallel node)"""
         try:
-            print("🖼️ Step 6b: Generating images (parallel)")
+            print("Step 6b: Generating images (parallel)")
             
             if not state.prompts_generated:
-                print("⚠️ No prompts available, skipping image generation")
+                print("No prompts available, skipping image generation")
                 return {
                     "images_generated": [],
-                    "messages": [AIMessage(content="⚠️ No prompts available, skipped image generation")]
+                    "messages": [AIMessage(content="No prompts available, skipped image generation")]
                 }
             
-            image_tool = image_generation_tools[0]  # Assuming first tool is main image generator
+            image_tool = image_generation_tools[0]  # generate_image_flux
             
             generated_images = []
             for prompt_data in state.prompts_generated[:3]:  # Limit to 3 images
                 try:
                     image_result = await image_tool.ainvoke({"prompt": prompt_data["prompt"]})
-                    generated_images.append(image_result)
+                    result_dict = json.loads(image_result)
+                    if result_dict.get("status") == "success":
+                        generated_images.append(result_dict["file_path"])  # Store file path directly
+                    else:
+                        print(f"Image generation failed for prompt: {prompt_data['prompt'][:50]}...")
                 except Exception as img_error:
-                    print(f"⚠️ Image generation failed for prompt: {img_error}")
+                    print(f"Image generation failed for prompt: {img_error}")
             
             return {
                 "images_generated": generated_images,
@@ -450,39 +462,35 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Image generation failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "errors": [error_msg],
                 "images_generated": [],
-                "messages": [AIMessage(content="❌ Image generation failed")]
+                "messages": [AIMessage(content="Image generation failed")]
             }
     
     async def voice_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate voiceover from script (parallel node)"""
         try:
-            print("🎙️ Step 6c: Generating voiceover (parallel)")
+            print("Step 6c: Generating voiceover (parallel)")
         
             if not state.script_content:
-                print("⚠️ No script content available, skipping voice generation")
+                print("No script content available, skipping voice generation")
                 return {
                     "voice_files": [],
                     "messages": [AIMessage(content="No script content available, skipped voice generation")]
                 }
         
-            voice_tool = voice_tools[0]  # generate_voiceover tool
+            voice_tool = voice_tools[0]  # generate_voiceover
         
-            # Clean script by removing section headers and any residual formatting
             clean_script = state.script_content
-            # Remove old formatting markers
             for marker in ["**HOOK:**", "**ACT 1", "**ACT 2", "**ACT 3", "**CONCLUSION", "**"]:
                 clean_script = clean_script.replace(marker, "")
-            # Remove new section headers from updated scripting agent
             for header in [
                 "[0-5s: HOOK]", "[5-15s: INTRODUCTION]", 
                 "[15-45s: MAIN CONTENT]", "[45-60s: CONCLUSION/CTA]"
             ]:
                 clean_script = clean_script.replace(header, "")
-            # Remove extra newlines and whitespace
             clean_script = re.sub(r'\n\s*\n', '\n', clean_script).strip()
         
             voice_input = {
@@ -501,7 +509,7 @@ class ProductionWorkflow:
         
         except Exception as e:
             error_msg = f"Voice generation failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "errors": [error_msg],
                 "voice_files": [],
@@ -511,7 +519,7 @@ class ProductionWorkflow:
     async def asset_gathering_node(self, state: WorkflowState) -> WorkflowState:
         """Organize generated assets in Google Drive project folder (sequential node)"""
         try:
-            print("📁 Step 7: Gathering and organizing assets in Google Drive")
+            print("Step 7: Gathering and organizing assets in Google Drive")
             state.current_step = "asset_gathering"
             
             script_data = {
@@ -553,17 +561,17 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Asset gathering failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "asset_gathering",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Asset gathering failed")]
+                "messages": [AIMessage(content="Asset gathering failed")]
             }
     
     async def notion_integration_node(self, state: WorkflowState) -> WorkflowState:
         """Create Notion project and set up monitoring (sequential node)"""
         try:
-            print("📋 Step 8: Setting up Notion project tracking")
+            print("Step 8: Setting up Notion project tracking")
             state.current_step = "notion_integration"
             
             notion_script_data = {
@@ -573,7 +581,9 @@ class ProductionWorkflow:
                 'article_id': state.article_id,
                 'hook': state.script_hook,
                 'visual_suggestions': state.visual_suggestions,
-                'folder_path': state.project_folder_path
+                'folder_path': state.project_folder_path,
+                'project_id': state.script_id or state.article_id or "unknown",
+                'channels': ['youtube']
             }
             
             notion_tool = notion_tools[0]  # create_notion_project_row
@@ -587,7 +597,7 @@ class ProductionWorkflow:
             if state.project_folder_path:
                 monitor_tool = notion_tools[2]  # monitor_gdrive_folder
                 monitor_result = await monitor_tool.ainvoke({"folder_path": state.project_folder_path})
-                print(f"📡 Monitoring setup: {monitor_result[:100]}...")
+                print(f"Monitoring setup: {monitor_result[:100]}...")
             
             return {
                 "notion_project_id": notion_project_id,
@@ -598,22 +608,22 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Notion integration failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "notion_integration",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Notion integration failed")]
+                "messages": [AIMessage(content="Notion integration failed")]
             }
     
     async def finalize_node(self, state: WorkflowState) -> WorkflowState:
         """Finalize the workflow and compile results"""
         try:
-            print("✅ Step 9: Finalizing workflow")
+            print("Step 9: Finalizing workflow")
             
             final_summary = f"""
-🚀 **PRODUCTION WORKFLOW COMPLETED**
+PRODUCTION WORKFLOW COMPLETED
 
-📊 **Summary:**
+Summary:
 - Topic: {state.topic or state.user_query or 'Latest tech news'}
 - Article stored: {state.article_id or 'No ID extracted'}
 - Script generated: {state.script_id or 'Not stored'}
@@ -621,27 +631,27 @@ class ProductionWorkflow:
 - Voice files: {len(state.voice_files)}
 - Prompts generated: {len(state.prompts_generated)}
 
-📁 **Asset Organization:**
+Asset Organization:
 - Project folder: {state.project_folder_path or 'Not created'}
-- Asset status: {'✅ Organized' if state.asset_organization_result else '❌ Failed'}
+- Asset status: {'Organized' if state.asset_organization_result else 'Failed'}
 
-📋 **Notion Integration:**
+Notion Integration:
 - Project ID: {state.notion_project_id or 'Not created'}
 - Status: {state.notion_status or 'Not set'}
 
-📝 **Script Preview:**
+Script Preview:
 {(state.script_hook[:100] + '...') if state.script_hook else 'No hook extracted'}
 
-🎨 **Assets Generated:**
-- Article content: ✅ Stored in Supabase ({len(state.article_data.get('content', '')) if state.article_data else 0} chars)
-- Script content: ✅ Generated ({len(state.script_content)} chars)
-- Image prompts: ✅ {len(state.prompts_generated)} prompts
-- Generated images: ✅ {len(state.images_generated)} images
-- Voice files: ✅ {len(state.voice_files)} files
-- Google Drive: ✅ Project folder created with organized structure
-- Notion workspace: ✅ Project tracking row created
+Assets Generated:
+- Article content: Stored in Supabase ({len(state.article_data.get('content', '')) if state.article_data else 0} chars)
+- Script content: Generated ({len(state.script_content)} chars)
+- Image prompts: {len(state.prompts_generated)} prompts
+- Generated images: {len(state.images_generated)} images
+- Voice files: {len(state.voice_files)} files
+- Google Drive: Project folder created with organized structure
+- Notion workspace: Project tracking row created
 
-📁 **Google Drive Structure:**
+Google Drive Structure:
 {state.project_folder_path}/
   ├── generated_images/
   ├── voiceover/
@@ -649,18 +659,18 @@ class ProductionWorkflow:
   ├── final_draft/ (awaiting editor upload)
   └── resources/
 
-🔔 **Next Steps:**
+Next Steps:
 1. Editor uploads final video to: {state.project_folder_path}/final_draft/
 2. Video upload will trigger Notion status update to "Video Ready"
 3. Project will be ready for final publishing
 
-❌ **Errors encountered:** {len(state.errors)}
+Errors encountered: {len(state.errors)}
 {chr(10).join(state.errors) if state.errors else 'None'}
 
-📄 **Full Script Content:**
+Full Script Content:
 {state.script_content[:500] + '...' if len(state.script_content) > 500 else state.script_content}
 
-🎬 **Workflow Complete - Ready for Editor!**
+Workflow Complete - Ready for Editor!
 """
             
             return {
@@ -670,11 +680,11 @@ class ProductionWorkflow:
             
         except Exception as e:
             error_msg = f"Finalization failed: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return {
                 "current_step": "complete",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Workflow finalization failed")]
+                "messages": [AIMessage(content="Workflow finalization failed")]
             }
     
     def compile(self):
@@ -694,19 +704,19 @@ async def run_production_workflow(topic: str, user_query: str = "") -> WorkflowS
         current_step="search"
     )
     
-    print(f"🚀 Starting production workflow for topic: '{topic}'")
+    print(f"Starting production workflow for topic: '{topic}'")
     print("=" * 60)
     
     try:
         final_state = await production_workflow.ainvoke(initial_state)
         
         print("=" * 60)
-        print("✅ Workflow completed successfully!")
+        print("Workflow completed successfully!")
         
         return final_state
         
     except Exception as e:
-        print(f"❌ Workflow failed: {str(e)}")
+        print(f"Workflow failed: {str(e)}")
         initial_state.errors.append(f"Workflow execution failed: {str(e)}")
         return initial_state
 
