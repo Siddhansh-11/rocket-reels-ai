@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  rocket-reels-ai:
+    build: .
+    container_name: rocket-reels-ai
+    volumes:
+      - ./.env:/app/.env
+      - ./credentials:/app/credentials
+      - ./output:/app/output
+    environment:
+      - DISPLAY=$DISPLAY  # For potential GUI auth windows
+    stdin_open: true
+    tty: true

@@ -7,7 +7,7 @@ langchain-anthropic
 
 # State Management & Async
 pydantic
-asyncio-compat
+#asyncio-compat
 dataclasses-json
 
 # Database & Storage

@@ -12,7 +12,7 @@ from operator import add
 from agents.search_agent import search_tools
 from agents.crawl_agent import crawl_tools
 from agents.supabase_agent import supabase_tools_sync_wrapped
-from agents.scripting_agent import scripting_tools
+from agents.scripting_agent import script_generation_tools
 from agents.prompt_generation_agent import prompt_generation_tools
 from agents.image_generation_agent import image_generation_tools
 from agents.voice_generation_agent import voice_tools
@@ -44,7 +44,7 @@ class WorkflowState:
     visual_suggestions: List[str] = field(default_factory=list)
     script_id: str = ""
     
-    # Parallel generation phase (prompt, image, voice) - Using Annotated for concurrent updates
+    # Parallel generation phase (prompt, image, voice)
     prompts_generated: Annotated[List[Dict], add] = field(default_factory=list)
     images_generated: Annotated[List[str], add] = field(default_factory=list)
     voice_files: Annotated[List[str], add] = field(default_factory=list)
@@ -61,7 +61,6 @@ class WorkflowState:
     current_step: str = "search"
     errors: Annotated[List[str], add] = field(default_factory=list)
     messages: Annotated[List[BaseMessage], add] = field(default_factory=list)
-    
 
 class ProductionWorkflow:
     """Main production workflow graph implementation"""
@@ -72,7 +71,6 @@ class ProductionWorkflow:
     
     def _setup_workflow(self):
         """Define the workflow graph structure"""
-        
         # Add nodes
         self.workflow.add_node("search", self.search_node)
         self.workflow.add_node("crawl", self.crawl_node)
@@ -113,18 +111,81 @@ class ProductionWorkflow:
         # Finalize ends the workflow
         self.workflow.add_edge("finalize", END)
     
+    async def prompt_generation_node(self, state: WorkflowState) -> WorkflowState:
+        """Generate prompts for image generation (parallel node)"""
+        try:
+            print("🎨 Step 6a: Generating image prompts (parallel)")
+            
+            if not state.script_content:
+                print("⚠️ No script content available for prompt generation")
+                return {
+                    "prompts_generated": [],
+                    "messages": [AIMessage(content="⚠️ No script content available for prompt generation")]
+                }
+            
+            # Use the prompt generation tool
+            prompt_tool = prompt_generation_tools[0]  # generate_prompts_from_script
+            
+            print(f"🔍 DEBUG - Script content length: {len(state.script_content)} characters")
+            print(f"🔍 DEBUG - Script preview: {state.script_content[:200]}...")
+            
+            # Call the tool to generate prompts
+            prompts_result = await prompt_tool.ainvoke({
+                "script_content": state.script_content,
+                "num_prompts": 5
+            })
+            
+            print(f"🔍 DEBUG - Generated {len(prompts_result)} prompts")
+            for i, prompt in enumerate(prompts_result[:3], 1):
+                print(f"  {i}. {prompt.get('visual_description', 'No description')[:50]}...")
+            
+            # If no prompts were generated, log error
+            if not prompts_result:
+                print("⚠️ No prompts generated from script")
+                return {
+                    "prompts_generated": [],
+                    "messages": [AIMessage(content="⚠️ Failed to generate prompts from script")]
+                }
+            
+            # Convert prompts to the expected format for the workflow
+            generated_prompts = [
+                {
+                    "id": prompt["id"],
+                    "prompt": prompt["visual_description"],
+                    "type": "scene",
+                    "style": prompt.get("mood_style", "dynamic, engaging"),
+                    "timing": prompt.get("timing", f"Scene {prompt['scene_number']}")
+                } for prompt in prompts_result
+            ]
+            
+            print(f"✅ Generated {len(generated_prompts)} prompts for image generation")
+            
+            return {
+                "prompts_generated": generated_prompts,
+                "messages": [AIMessage(content=f"Generated {len(generated_prompts)} LLM-powered image prompts from script content")]
+            }
+            
+        except Exception as e:
+            error_msg = f"Prompt generation failed: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {
+                "errors": [error_msg],
+                "prompts_generated": [],
+                "messages": [AIMessage(content="❌ LLM prompt generation failed")]
+            }
+
+    # Other methods (search_node, crawl_node, etc.) remain unchanged
+    # Include only the necessary methods for context
     async def search_node(self, state: WorkflowState) -> WorkflowState:
         """Search for trending tech news using intelligent AI-powered search"""
         try:
             print(f"🔍 Step 1: Intelligent search for articles about '{state.topic}'")
             state.current_step = "search"
             
-            # Use intelligent search tool
             search_tool = search_tools[0]  # search_tech_news
             search_query = state.topic or "latest trending tech news"
             search_results = await search_tool.ainvoke(search_query)
             
-            # Extract URLs for next step
             url_extraction_tool = search_tools[1]  # extract_article_urls
             urls = await url_extraction_tool.ainvoke(search_results)
             search_urls = urls[:8] if len(urls) >= 8 else urls
@@ -154,11 +215,9 @@ class ProductionWorkflow:
             if not state.search_urls:
                 raise Exception("No URLs available to crawl")
             
-            # Crawl the first URL (best match)
             crawl_tool = crawl_tools[0]  # crawl_article_content
             crawled_result = await crawl_tool.ainvoke(state.search_urls[0])
             
-            # Parse the structured data from the crawled result
             if "```json" in crawled_result:
                 json_start = crawled_result.find("```json") + 7
                 json_end = crawled_result.find("```", json_start)
@@ -166,7 +225,6 @@ class ProductionWorkflow:
                 try:
                     article_data = json.loads(json_str)
                 except json.JSONDecodeError:
-                    # Fallback: create basic article data
                     article_data = {
                         "url": state.search_urls[0],
                         "title": "Crawled Article",
@@ -177,7 +235,7 @@ class ProductionWorkflow:
             else:
                 article_data = {
                     "url": state.search_urls[0],
-                    "title": "Crawled Article", 
+                    "title": "Crawled Article",
                     "content": crawled_result,
                     "domain": "unknown.com",
                     "word_count": len(crawled_result.split())
@@ -208,20 +266,13 @@ class ProductionWorkflow:
             if not state.article_data:
                 raise Exception("No article data available to store")
             
-            # Store article using Supabase agent
             storage_tool = supabase_tools_sync_wrapped[0]  # store_article_content_sync_wrapped
             
-            # Ensure the article data is properly formatted
             print(f"🔍 DEBUG - Article data type: {type(state.article_data)}")
             print(f"🔍 DEBUG - Article data keys: {list(state.article_data.keys()) if isinstance(state.article_data, dict) else 'Not a dict'}")
             
-            # Call the tool with the article data using asyncio.to_thread to avoid blocking
             storage_result = await asyncio.to_thread(storage_tool.invoke, {"article_data": state.article_data})
             
-            # Extract article ID from storage result for script linking
-            print(f"🔍 DEBUG - Storage result: {storage_result[:200]}...")
-            
-            # Try multiple patterns to extract article ID
             article_id = ""
             if "Record ID:" in storage_result:
                 id_match = re.search(r"Record ID:\s*([a-zA-Z0-9-]+)", storage_result)
@@ -251,94 +302,76 @@ class ProductionWorkflow:
             }
     
     async def generate_script_node(self, state: WorkflowState) -> WorkflowState:
-        """Generate script from stored article"""
+        """Generate script content from article data"""
         try:
             print("📝 Step 4: Generating script content")
-            state.current_step = "generate_script"
             
             if not state.article_data:
-                raise Exception("No article data available for script generation")
+                return {
+                    "errors": ["No article data available for script generation"],
+                    "current_step": "script_failed",
+                    "messages": [AIMessage(content="❌ No article data for script generation")],
+                }
             
-            # Use scripting agent to generate script
-            script_tool = scripting_tools[0]  # Assuming first tool is the main script generator
+            article_data = state.article_data
+            article_title = article_data.get("title", "") if isinstance(article_data, dict) else ""
+            article_content = article_data.get("content", "") if isinstance(article_data, dict) else ""
             
-            # Prepare input for script generation with proper format
-            script_input = {
-                "url": state.article_data.get('url', ''),
-                "title": state.article_data.get('title', state.topic),
-                "content": state.article_data.get('content', ''),
-                "domain": state.article_data.get('domain', 'tech news'),
-                "word_count": state.article_data.get('word_count', 0),
-                "key_points": state.article_data.get('key_points', []),
-                "topic": state.article_data.get('title', state.topic),
-                "article_content": state.article_data.get('content', ''),
+            print(f"🔍 Generating script from:")
+            print(f"  - Title: {article_title[:100]}...")
+            print(f"  - Content: {len(article_content)} characters")
+            
+            if not article_content and not article_title:
+                return {
+                    "errors": ["Article data exists but contains no title or content"],
+                    "current_step": "script_failed",
+                    "messages": [AIMessage(content="❌ Article data is empty")],
+                }
+            
+            script_tool = script_generation_tools[0]  # generate_youtube_script
+            script_result = await script_tool.ainvoke({
+                "article_content": article_content,
+                "article_title": article_title,
                 "platform": "youtube",
-                "source": state.article_data.get('domain', 'tech news')
-            }
+                "duration": 60
+            })
             
-            print(f"🔍 DEBUG - Script input prepared with keys: {list(script_input.keys())}")
-            print(f"🔍 DEBUG - Content length: {len(script_input.get('content', ''))}")
+            print(f"📝 Script generation result: {script_result[:200]}...")
             
-            # Debug the tool call
-            print(f"🔍 DEBUG - Calling script tool with: article_data keys={list(script_input.keys())}")
-            print(f"🔍 DEBUG - Has URL: {'url' in script_input and script_input['url']}")
-            print(f"🔍 DEBUG - Has content: {'content' in script_input and script_input['content']}")
-            
-            # Call the tool with the correct parameter format
-            script_result = await script_tool.ainvoke({"article_data": script_input, "platform": "youtube"})
-            
-            # Parse script result
-            print(f"🔍 DEBUG - Script result type: {type(script_result)}")
-            print(f"🔍 DEBUG - Script result preview: {str(script_result)[:200]}...")
-            
+            script_content = ""
             script_hook = ""
-            visual_suggestions = []
             
-            # Extract hook and visual suggestions if available
-            if isinstance(script_result, str):
-                if "**HOOK:**" in script_result:
-                    hook_match = re.search(r"\*\*HOOK:\*\*\s*(.+?)(?:\n\*\*|\n\n|$)", script_result, re.DOTALL)
-                    if hook_match:
-                        script_hook = hook_match.group(1).strip()
-                elif "HOOK:" in script_result:
-                    hook_start = script_result.find("HOOK:") + 5
-                    hook_end = script_result.find("\n", hook_start)
-                    if hook_end == -1:
-                        hook_end = len(script_result)
-                    script_hook = script_result[hook_start:hook_end].strip()
-                
-                # Extract visual suggestions
-                if "Visual Suggestions:" in script_result:
-                    visual_start = script_result.find("Visual Suggestions:") + 19
-                    visual_section = script_result[visual_start:visual_start+500]
-                    visual_suggestions = [line.strip().lstrip('-•').strip() for line in visual_section.split('\n') if line.strip() and ('-' in line or '•' in line)]
-                
-                # Fallback: create some basic visual suggestions
-                if not visual_suggestions:
-                    visual_suggestions = [
-                        f"Technology showcase for {state.article_data.get('title', 'the topic')}",
-                        f"Modern tech illustration featuring {state.article_data.get('domain', 'tech news')}",
-                        "Professional tech presentation background"
-                    ]
+            if "**FULL SCRIPT:**" in script_result:
+                script_parts = script_result.split("**FULL SCRIPT:**")
+                if len(script_parts) > 1:
+                    script_content = script_parts[1].split("**📊 Script Metadata:**")[0].strip()
             
-            print(f"🔍 DEBUG - Extracted hook: '{script_hook}'")
-            print(f"🔍 DEBUG - Visual suggestions: {len(visual_suggestions)} items")
+            if "**HOOK**:" in script_result:
+                hook_lines = script_result.split("**HOOK**:")
+                if len(hook_lines) > 1:
+                    hook_part = hook_lines[1].split("\n")[0].strip()
+                    script_hook = hook_part
+            
+            if not script_content:
+                script_content = script_result
+            
+            print(f"✅ Extracted script: {len(script_content)} characters")
+            print(f"✅ Extracted hook: {script_hook[:50]}...")
             
             return {
-                "script_content": script_result,
+                "script_content": script_content,
                 "script_hook": script_hook,
-                "visual_suggestions": visual_suggestions,
-                "current_step": "generate_script",
-                "messages": [AIMessage(content=f"Script generated successfully ({len(script_result)} characters)")]
+                "current_step": "script_complete",
+                "messages": [AIMessage(content=f"Generated script: {len(script_content)} characters")],
             }
             
         except Exception as e:
             error_msg = f"Script generation failed: {str(e)}"
             print(f"❌ {error_msg}")
             return {
-                "current_step": "generate_script",
                 "errors": [error_msg],
-                "messages": [AIMessage(content="❌ Script generation failed")]
+                "current_step": "script_failed",
+                "messages": [AIMessage(content="❌ Script generation failed")],
             }
     
     async def store_script_node(self, state: WorkflowState) -> WorkflowState:
@@ -350,11 +383,9 @@ class ProductionWorkflow:
             if not state.script_content:
                 raise Exception("Missing script content for storage")
             
-            # If no article ID, use a placeholder or skip linking
             article_id = state.article_id if state.article_id else "unknown"
             print(f"🔍 DEBUG - Using article ID for script: '{article_id}'")
             
-            # Prepare script data for storage
             script_data = {
                 "article_id": article_id,
                 "platform": "youtube",
@@ -367,11 +398,9 @@ class ProductionWorkflow:
                 }
             }
             
-            # Store script using Supabase agent  
             script_storage_tool = supabase_tools_sync_wrapped[6]  # store_script_content
             script_storage_result = await asyncio.to_thread(script_storage_tool.invoke, {"script_data": script_data})
             
-            # Extract script ID
             script_id = ""
             if "Script ID:" in script_storage_result:
                 id_line = [line for line in script_storage_result.split('\n') if "Script ID:" in line][0]
@@ -392,55 +421,6 @@ class ProductionWorkflow:
                 "messages": [AIMessage(content="❌ Script storage failed")]
             }
     
-    async def prompt_generation_node(self, state: WorkflowState) -> WorkflowState:
-        """Generate prompts for image generation (parallel node)"""
-        try:
-            print("🎨 Step 6a: Generating image prompts (parallel)")
-            
-            if not state.visual_suggestions and not state.script_content:
-                print("⚠️ No visual suggestions or script content available, creating basic prompts")
-                generated_prompts = [
-                    {"prompt": f"Technology concept art for {state.topic or 'tech news'}", "type": "thumbnail"},
-                    {"prompt": f"Modern tech illustration {state.topic or 'tech news'}", "type": "background"}
-                ]
-            else:
-                # Use prompt generation agent with script content
-                prompt_tool = prompt_generation_tools[0]  # generate_prompts_from_script
-                
-                # Use script content if available, otherwise use visual suggestions
-                content_to_use = state.script_content if state.script_content else "\n".join(state.visual_suggestions)
-                
-                prompts_result = await prompt_tool.ainvoke({"script_content": content_to_use, "num_prompts": 5})
-                
-                # Parse the result to extract actual prompts
-                if "Generated" in prompts_result and "prompts" in prompts_result:
-                    # Extract prompts from the generated result
-                    generated_prompts = [
-                        {"prompt": suggestion, "type": "scene"} 
-                        for suggestion in state.visual_suggestions[:5]
-                    ]
-                else:
-                    # Fallback to visual suggestions
-                    generated_prompts = [
-                        {"prompt": suggestion, "type": "scene"} 
-                        for suggestion in state.visual_suggestions[:5]
-                    ]
-            
-            # Return the prompts to be added to state
-            return {
-                "prompts_generated": generated_prompts,
-                "messages": [AIMessage(content=f"Generated {len(generated_prompts)} image prompts")]
-            }
-            
-        except Exception as e:
-            error_msg = f"Prompt generation failed: {str(e)}"
-            print(f"❌ {error_msg}")
-            return {
-                "errors": [error_msg],
-                "prompts_generated": [],
-                "messages": [AIMessage(content="❌ Prompt generation failed")]
-            }
-    
     async def image_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate images from prompts (parallel node)"""
         try:
@@ -453,7 +433,6 @@ class ProductionWorkflow:
                     "messages": [AIMessage(content="⚠️ No prompts available, skipped image generation")]
                 }
             
-            # Use image generation agent
             image_tool = image_generation_tools[0]  # Assuming first tool is main image generator
             
             generated_images = []
@@ -482,45 +461,51 @@ class ProductionWorkflow:
         """Generate voiceover from script (parallel node)"""
         try:
             print("🎙️ Step 6c: Generating voiceover (parallel)")
-            
+        
             if not state.script_content:
                 print("⚠️ No script content available, skipping voice generation")
                 return {
                     "voice_files": [],
-                    "messages": [AIMessage(content="⚠️ No script content available, skipped voice generation")]
+                    "messages": [AIMessage(content="No script content available, skipped voice generation")]
                 }
-            
-            # Use voice generation agent
+        
             voice_tool = voice_tools[0]  # generate_voiceover tool
-            
-            # Extract just the script text without formatting
+        
+            # Clean script by removing section headers and any residual formatting
             clean_script = state.script_content
-            # Remove formatting markers
+            # Remove old formatting markers
             for marker in ["**HOOK:**", "**ACT 1", "**ACT 2", "**ACT 3", "**CONCLUSION", "**"]:
                 clean_script = clean_script.replace(marker, "")
-            
-            # Use correct parameter name: script_text (not text)
+            # Remove new section headers from updated scripting agent
+            for header in [
+                "[0-5s: HOOK]", "[5-15s: INTRODUCTION]", 
+                "[15-45s: MAIN CONTENT]", "[45-60s: CONCLUSION/CTA]"
+            ]:
+                clean_script = clean_script.replace(header, "")
+            # Remove extra newlines and whitespace
+            clean_script = re.sub(r'\n\s*\n', '\n', clean_script).strip()
+        
             voice_input = {
-                "script_text": clean_script[:1000],  # Limit text length for voice generation
+                "script_text": clean_script[:1000],
                 "voice_name": "default",
                 "emotion": "neutral"
             }
-            
+        
             voice_result = await voice_tool.ainvoke(voice_input)
             voice_files = [voice_result] if voice_result else []
-            
+        
             return {
                 "voice_files": voice_files,
                 "messages": [AIMessage(content=f"Generated {len(voice_files)} voice files")]
             }
-            
+        
         except Exception as e:
             error_msg = f"Voice generation failed: {str(e)}"
             print(f"❌ {error_msg}")
             return {
                 "errors": [error_msg],
                 "voice_files": [],
-                "messages": [AIMessage(content="❌ Voice generation failed")]
+                "messages": [AIMessage(content="Voice generation failed")]
             }
     
     async def asset_gathering_node(self, state: WorkflowState) -> WorkflowState:
@@ -529,7 +514,6 @@ class ProductionWorkflow:
             print("📁 Step 7: Gathering and organizing assets in Google Drive")
             state.current_step = "asset_gathering"
             
-            # Prepare script data for folder creation
             script_data = {
                 'title': state.article_data.get('title', state.topic),
                 'script_content': state.script_content,
@@ -539,30 +523,25 @@ class ProductionWorkflow:
                 'visual_suggestions': state.visual_suggestions
             }
             
-            # Create project folder structure
             folder_tool = asset_gathering_tools[0]  # create_project_folder_structure
-            folder_result = await folder_tool.ainvoke(script_data)
+            folder_result = await folder_tool.ainvoke({"script_data": script_data})
             
-            # Extract folder path from result
             project_folder_path = ""
             if "Folder Path:" in folder_result:
                 folder_path_line = [line for line in folder_result.split('\n') if "Folder Path:" in line][0]
                 project_folder_path = folder_path_line.split("Folder Path:")[1].strip()
-            
-            # Organize assets
-            assets_data = {
-                'images': state.images_generated,
-                'voice_files': state.voice_files,
-                'script_content': state.script_content,
-                'prompts': state.prompts_generated
-            }
             
             asset_result = ""
             if project_folder_path:
                 organize_tool = asset_gathering_tools[1]  # organize_generated_assets
                 asset_result = await organize_tool.ainvoke({
                     'project_folder_path': project_folder_path,
-                    'assets_data': assets_data
+                    'assets_data': {
+                        'images': state.images_generated,
+                        'voice_files': state.voice_files,
+                        'script_content': state.script_content,
+                        'prompts': state.prompts_generated
+                    }
                 })
             
             return {
@@ -587,7 +566,6 @@ class ProductionWorkflow:
             print("📋 Step 8: Setting up Notion project tracking")
             state.current_step = "notion_integration"
             
-            # Prepare script data for Notion
             notion_script_data = {
                 'title': state.article_data.get('title', state.topic),
                 'script_content': state.script_content,
@@ -598,20 +576,17 @@ class ProductionWorkflow:
                 'folder_path': state.project_folder_path
             }
             
-            # Create Notion project row
             notion_tool = notion_tools[0]  # create_notion_project_row
-            notion_result = await notion_tool.ainvoke(notion_script_data)
+            notion_result = await notion_tool.ainvoke({"script_data": notion_script_data})
             
-            # Extract project ID from result
             notion_project_id = ""
             if "Page ID:" in notion_result:
                 id_line = [line for line in notion_result.split('\n') if "Page ID:" in line][0]
                 notion_project_id = id_line.split("Page ID:")[1].strip()
             
-            # Set up folder monitoring (placeholder for now)
             if state.project_folder_path:
                 monitor_tool = notion_tools[2]  # monitor_gdrive_folder
-                monitor_result = await monitor_tool.ainvoke(state.project_folder_path)
+                monitor_result = await monitor_tool.ainvoke({"folder_path": state.project_folder_path})
                 print(f"📡 Monitoring setup: {monitor_result[:100]}...")
             
             return {
@@ -635,7 +610,6 @@ class ProductionWorkflow:
         try:
             print("✅ Step 9: Finalizing workflow")
             
-            # Compile final results
             final_summary = f"""
 🚀 **PRODUCTION WORKFLOW COMPLETED**
 
@@ -714,7 +688,6 @@ production_workflow = _workflow_instance.compile()
 # Helper function to run workflow
 async def run_production_workflow(topic: str, user_query: str = "") -> WorkflowState:
     """Helper function to run the production workflow"""
-    # Initialize state
     initial_state = WorkflowState(
         user_query=user_query,
         topic=topic,
@@ -725,7 +698,6 @@ async def run_production_workflow(topic: str, user_query: str = "") -> WorkflowS
     print("=" * 60)
     
     try:
-        # Run the compiled workflow
         final_state = await production_workflow.ainvoke(initial_state)
         
         print("=" * 60)
@@ -739,7 +711,6 @@ async def run_production_workflow(topic: str, user_query: str = "") -> WorkflowS
         return initial_state
 
 if __name__ == "__main__":
-    # Example usage
     async def main():
         result = await run_production_workflow("latest AI breakthrough")
         print(f"Final result: {result.current_step}")

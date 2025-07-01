@@ -270,9 +270,24 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
         if 'images' in assets_data and assets_data['images']:
             images_moved = []
             for image_path in assets_data['images']:
-                # This would involve uploading files or moving them if they're already in Drive
-                # For now, we'll record the organization plan
-                images_moved.append(image_path)
+                try:
+                    if os.path.exists(image_path):
+                        image_filename = os.path.basename(image_path)
+                        image_file_metadata = {
+                            'name': image_filename,
+                            'parents': [subfolders['generated_images']]
+                        }
+                        media = MediaFileUpload(image_path, mimetype='image/jpeg')
+                        image_file = service.files().create(body=image_file_metadata, media_body=media).execute()
+                        images_moved.append(image_file.get('id'))
+                        print(f"✅ Uploaded image: {image_filename}")
+                        
+                        # Release handle and wait
+                        media = None
+                        time.sleep(0.5)
+                except Exception as e:
+                    print(f"⚠️ Failed to upload image {image_path}: {str(e)}")
+    
             organized_assets['images'] = images_moved
         
         # Move voice files
@@ -289,10 +304,12 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
             
             # Create script file in scripts subfolder
             import tempfile
+            import time
+
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
                 temp_file.write(script_content)
                 temp_file_path = temp_file.name
-            
+
             try:
                 from googleapiclient.http import MediaFileUpload
                 script_file_metadata = {
@@ -302,8 +319,18 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
                 media = MediaFileUpload(temp_file_path, mimetype='text/plain')
                 script_file = service.files().create(body=script_file_metadata, media_body=media).execute()
                 organized_assets['script_file'] = script_file.get('id')
+                
+                # Add this: Wait for file operations to complete
+                media = None  # Release the file handle
+                time.sleep(0.5)  # Give the system time to release the file
             finally:
-                os.unlink(temp_file_path)
+                try:
+                    # Use try-except to prevent failing if file is still locked
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                except OSError as e:
+                    print(f"Note: Could not delete temp file {temp_file_path}: {e}")
+                    # This doesn't need to fail the entire operation
         
         return f"""✅ **ASSETS ORGANIZED**
 
