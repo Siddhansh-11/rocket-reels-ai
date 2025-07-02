@@ -56,47 +56,75 @@ async def generate_youtube_script(
             target_words = 900
         
         # Create the script generation prompt
+        # Replace your existing script_prompt with this improved version:
+
         script_prompt = f"""You are an expert YouTube script writer who emulates Varun Mayya's engaging, conversational, and energetic style, creating voiceover-friendly content that captivates a tech-savvy audience.
 
-Your task is to create a compelling {duration}-second YouTube script based on this article content, styled like Varun Mayya’s videos.
+        Your task is to create a compelling {duration}-second YouTube script based on this article content, styled like Varun Mayya's videos.
 
-ARTICLE TITLE: {clean_title}
+        ARTICLE TITLE: {clean_title}
 
-ARTICLE CONTENT:
-{clean_content}
+        ARTICLE CONTENT:
+        {clean_content}
 
-SCRIPT REQUIREMENTS:
-- Target duration: {duration} seconds (~{target_words} words)
-- Platform: {platform.upper()}
-- Style: Engaging, conversational, energetic, and relatable, like Varun Mayya. Use short, punchy sentences and address the audience directly (e.g., "you"). Simplify technical concepts for a broad audience and include storytelling elements to make it exciting.
-- Include a strong hook in the first 5 seconds that poses a question or bold statement to grab attention.
-- Use natural, spoken language that sounds clear when read aloud.
-- Focus on the most engaging insights from the article, avoiding generic templates.
-- Avoid emoticons, bold text, or formatting markers (e.g., **, *, -).
-- Use plain text with section headers in square brackets (e.g., [0-5s: HOOK]).
-- Base the script ENTIRELY on the provided article content, using specific details, companies, or features mentioned.
-- Do NOT include metadata (e.g., timestamps, source links, or publication details) in the script.
-- Make the content feel personal, like you’re explaining it to a friend excited about tech.
+        SCRIPT REQUIREMENTS:
+        - Target duration: {duration} seconds (~{target_words} words)
+        - Platform: {platform.upper()}
+        - Style: Engaging, conversational, energetic, and relatable, like Varun Mayya. Use short, punchy sentences and address the audience directly (e.g., "you"). Simplify technical concepts for a broad audience and include storytelling elements to make it exciting.
+        - Include a strong hook in the first 5 seconds that poses a question or bold statement to grab attention.
+        - Use natural, spoken language that sounds clear when read aloud.
+        - Focus on the most engaging insights from the article, avoiding generic templates.
+        - Avoid emoticons, bold text, or formatting markers (e.g., **, *, -).
+        - Use plain text with section headers in square brackets (e.g., [0-5s: HOOK]).
+        - Base the script ENTIRELY on the provided article content, using specific details, companies, or features mentioned.
+        - Do NOT include metadata (e.g., timestamps, source links, or publication details) in the script.
+        - Make the content feel personal, like you're explaining it to a friend excited about tech.
 
-SCRIPT STRUCTURE:
-[0-5s: HOOK]: 1-2 sentences with a bold question or statement to grab attention (e.g., "What if AI could replace your job tomorrow?").
-[5-15s: INTRODUCTION]: 2-3 sentences introducing the topic in a relatable way, tying it to the audience’s interests.
-[15-45s: MAIN CONTENT]: 3-5 key points from the article, explained simply with a storytelling vibe, focusing on real-world impact or exciting features.
-[45-60s: CONCLUSION/CTA]: 1-2 sentences wrapping up with a strong call to action (e.g., "Check the link below to learn more and subscribe for more tech updates!").
+        CRITICAL SPACING REQUIREMENTS:
+        - ALWAYS ensure proper spacing between all words
+        - NEVER merge words together (e.g., avoid "gadgetit's" - write "gadget it's")
+        - ALWAYS add spaces after punctuation before the next word
+        - Double-check that every sentence flows naturally with proper spacing
+        - Pay special attention to compound words and contractions
 
-OUTPUT FORMAT:
-Return ONLY the plain text script with the specified section headers, like this:
-[0-5s: HOOK]
-Hook content here
-[5-15s: INTRODUCTION]
-Introduction content here
-[15-45s: MAIN CONTENT]
-Main content here
-[45-60s: CONCLUSION/CTA]
-Conclusion and call to action here
+        SCRIPT STRUCTURE:
+        [0-5s: HOOK]
+        [5-15s: INTRODUCTION] 
+        [15-45s: MAIN CONTENT]
+        [45-60s: CONCLUSION/CTA]
 
-If the article content is long or complex, summarize the 3-5 most engaging points (e.g., key features, real-world impacts, or exciting developments). Do not include any additional text, metadata, or notes outside the script structure."""
+        STRICT FORMATTING RULES:
+        1. Use EXACTLY these section headers with proper spacing and capitalization
+        2. Each section must contain at least 2 sentences
+        3. Never combine sections
+        4. Maintain proper spacing between ALL words and punctuation
+        5. Do not include any timestamps beyond the section headers
+        6. Do not include any metadata (e.g., source links, publication details)
+        7. Do not include any emoticons or formatting markers
+        8. Carefully proofread each sentence to ensure no words are merged together
 
+        OUTPUT FORMAT:
+        Return ONLY the plain text script with the specified section headers, like this:
+        [0-5s: HOOK]
+        Hook content here with proper spacing between all words
+
+        [5-15s: INTRODUCTION]
+        Introduction content here with proper spacing between all words
+
+        [15-45s: MAIN CONTENT]
+        Main content here with proper spacing between all words
+
+        [45-60s: CONCLUSION/CTA]
+        Conclusion and call to action here with proper spacing between all words
+
+        FINAL CHECK: Before outputting, read through your entire script and verify that:
+        - Every word is properly separated by spaces
+        - No words are accidentally merged together
+        - Punctuation is followed by appropriate spacing
+        - The script reads naturally when spoken aloud
+
+        If the article content is long or complex, summarize the 3-5 most engaging points (e.g., key features, real-world impacts, or exciting developments). Do not include any additional text, metadata, or notes outside the script structure."""
+        
         # Generate script using Deepseek
         print("Calling DeepSeek LLM for script generation...")
         response = await deepseek_model.ainvoke([HumanMessage(content=script_prompt)])
@@ -153,50 +181,108 @@ def clean_article_title(title: str) -> str:
     return title
 
 def clean_generated_script(script: str, article_content: str, article_title: str, duration: int) -> str:
-    """Clean the generated script to ensure voiceover-friendliness"""
-    # Remove any emoticons or formatting markers
-    script = re.sub(r'[🚀✅🔥📝📊🎬🎙️—–]', '', script)
-    script = re.sub(r'\*\*.*?\*\*', lambda m: m.group(0).replace('**', ''), script)
-    script = re.sub(r'[*#\-]', '', script)
+    """Clean and properly format the generated script"""
+    if not script:
+        return generate_fallback_script(article_content, article_title, duration)
     
-    # Define expected section headers
-    sections = [
+    # Remove emojis and unwanted characters
+    script = re.sub(r'[🚀✅🔥📝📊🎬🎙️—–]', '', script)
+    
+    # Define the section headers in correct order
+    section_headers = [
         '[0-5s: HOOK]',
-        '[5-15s: INTRODUCTION]',
+        '[5-15s: INTRODUCTION]', 
         '[15-45s: MAIN CONTENT]',
         '[45-60s: CONCLUSION/CTA]'
     ]
     
-    clean_script = []
-    current_section = None
-    lines = script.split('\n')
-    section_content = {section: [] for section in sections}
+    # Extract content for each section
+    sections = {}
     
-    # Parse lines and assign to sections
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    # Split script by potential section markers and clean them
+    for header in section_headers:
+        # Try multiple variations of the header format
+        patterns = [
+            re.escape(header),
+            re.escape(header).replace(r'\-', r'\s*\-\s*').replace(r'\:', r'\s*\:\s*'),
+            re.escape(header).replace(r'\[', r'\[\s*').replace(r'\]', r'\s*\]'),
+            header.replace('[', r'\[\s*').replace(']', r'\s*\]').replace(':', r'\s*:\s*').replace('-', r'\s*\-\s*')
+        ]
+        
+        content_found = False
+        for pattern in patterns:
+            # Look for the section header and extract content until next section or end
+            regex_pattern = f'({pattern})(.*?)(?=\[|$)'
+            match = re.search(regex_pattern, script, re.DOTALL | re.IGNORECASE)
             
-        # Check if line is a section header
-        if any(section in line for section in sections):
-            current_section = next((s for s in sections if s in line), None)
-        elif current_section:
-            section_content[current_section].append(line)
-        else:
-            # Assign early content to HOOK
-            section_content['[0-5s: HOOK]'].append(line)
+            if match:
+                content = match.group(2).strip()
+                if content and len(content) > 10:  # Ensure meaningful content
+                    sections[header] = content
+                    content_found = True
+                    break
+        
+        # If no content found, try to extract from fallback
+        if not content_found:
+            sections[header] = generate_fallback_section(header, article_content, article_title, duration)
     
-    # Build the final script
-    for section in sections:
-        clean_script.append(section)
-        content = section_content.get(section, [])
-        if content and len(' '.join(content)) > 10:  # Ensure meaningful content
-            clean_script.append('\n'.join(content))
-        else:
-            clean_script.append(generate_fallback_section(section, article_content, article_title, duration))
+    # Reconstruct the script in proper format
+    formatted_script = []
     
-    return '\n\n'.join(clean_script).strip()
+    for header in section_headers:
+        content = sections.get(header, generate_fallback_section(header, article_content, article_title, duration))
+        
+        # Clean the content
+        content = clean_section_content(content)
+        
+        # Add the section
+        formatted_script.append(header)
+        formatted_script.append(content)
+        formatted_script.append("")  # Empty line for spacing
+    
+    # Join and clean up final formatting
+    result = '\n'.join(formatted_script).strip()
+    
+    # Remove any duplicate section headers that might appear in content
+    for header in section_headers:
+        # Remove header if it appears in the middle of content
+        pattern = f'\n{re.escape(header)}\n'
+        if result.count(pattern) > 1:
+            # Keep only the first occurrence
+            parts = result.split(pattern)
+            result = pattern.join([parts[0]] + [part.replace(header, '').strip() for part in parts[1:]])
+    
+    return result
+
+def clean_section_content(content: str) -> str:
+    """Clean individual section content"""
+    if not content:
+        return "Content not available"
+    
+    # Fix spacing issues
+    content = re.sub(r'\s+', ' ', content)
+    
+    # Fix punctuation spacing
+    content = re.sub(r'\s+([,.!?;:])', r'\1', content)  # Remove space before punctuation
+    content = re.sub(r'([,.!?;:])(?=[A-Za-z])', r'\1 ', content)  # Add space after punctuation
+    
+    # Fix common spacing issues
+    content = re.sub(r"(\w)'(\w)", r"\1'\2", content)  # Fix contractions
+    content = re.sub(r'\s*-\s*', ' - ', content)  # Fix dash spacing
+    
+    # Remove any section headers that might be embedded in content
+    section_patterns = [
+        r'\[\d+\s*-\s*\d+s\s*:\s*[A-Z/]+\]',
+        r'\[.*?HOOK.*?\]',
+        r'\[.*?INTRODUCTION.*?\]', 
+        r'\[.*?MAIN CONTENT.*?\]',
+        r'\[.*?CONCLUSION.*?\]'
+    ]
+    
+    for pattern in section_patterns:
+        content = re.sub(pattern, '', content, flags=re.IGNORECASE)
+    
+    return content.strip()
 
 def generate_fallback_section(section: str, article_content: str, article_title: str, duration: int) -> str:
     """Generate a fallback section in Varun Mayya's style"""
