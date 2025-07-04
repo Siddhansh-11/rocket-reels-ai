@@ -16,6 +16,7 @@ from agents.scripting_agent import script_generation_tools
 from agents.prompt_generation_agent import prompt_generation_tools
 from agents.image_generation_agent import image_generation_tools
 from agents.voice_generation_agent import voice_tools
+from agents.broll_search_agent import broll_search_tools
 from agents.asset_gathering_agent import asset_gathering_tools
 from agents.notion_agent import notion_tools
 
@@ -44,10 +45,11 @@ class WorkflowState:
     visual_suggestions: List[str] = field(default_factory=list)
     script_id: str = ""
     
-    # Parallel generation phase (prompt, image, voice)
+    # Parallel generation phase (prompt, image, voice, broll)
     prompts_generated: Annotated[List[Dict], add] = field(default_factory=list)
     images_generated: Annotated[List[str], add] = field(default_factory=list)
     voice_files: Annotated[List[str], add] = field(default_factory=list)
+    broll_assets: Dict[str, Any] = field(default_factory=dict)
     
     # Asset gathering phase
     project_folder_path: str = ""
@@ -80,6 +82,7 @@ class ProductionWorkflow:
         self.workflow.add_node("prompt_generation", self.prompt_generation_node)
         self.workflow.add_node("image_generation", self.image_generation_node)
         self.workflow.add_node("voice_generation", self.voice_generation_node)
+        self.workflow.add_node("broll_search", self.broll_search_node)
         self.workflow.add_node("asset_gathering", self.asset_gathering_node)
         self.workflow.add_node("notion_integration", self.notion_integration_node)
         self.workflow.add_node("finalize", self.finalize_node)
@@ -95,26 +98,20 @@ class ProductionWorkflow:
         self.workflow.add_edge("store_script", "prompt_generation")
         self.workflow.add_edge("store_script", "voice_generation")
         
-        # Image generation follows prompt generation
+        # Image generation and b-roll search follow prompt generation
         self.workflow.add_edge("prompt_generation", "image_generation")
+        self.workflow.add_edge("prompt_generation", "broll_search")
         
-        # Conditional edge: asset_gathering only runs after both image_generation and voice_generation complete
-        self.workflow.add_conditional_edges(
-            "image_generation",
-            lambda state: "asset_gathering" if state.voice_files else "wait_for_voice",
-            {
-                "asset_gathering": "asset_gathering",
-                "wait_for_voice": "voice_generation"
-            }
-        )
-        self.workflow.add_conditional_edges(
-            "voice_generation",
-            lambda state: "asset_gathering" if state.images_generated else "wait_for_images",
-            {
-                "asset_gathering": "asset_gathering",
-                "wait_for_images": "image_generation"
-            }
-        )
+        # Add a parallel sync node to wait for all three processes
+        self.workflow.add_node("parallel_sync", self.parallel_sync_node)
+        
+        # All three parallel processes lead to parallel_sync
+        self.workflow.add_edge("image_generation", "parallel_sync")
+        self.workflow.add_edge("voice_generation", "parallel_sync")
+        self.workflow.add_edge("broll_search", "parallel_sync")
+        
+        # Parallel sync leads to asset gathering
+        self.workflow.add_edge("parallel_sync", "asset_gathering")
         
         # Asset gathering leads to Notion integration
         self.workflow.add_edge("asset_gathering", "notion_integration")
@@ -469,6 +466,76 @@ class ProductionWorkflow:
                 "messages": [AIMessage(content="Image generation failed")]
             }
     
+    async def parallel_sync_node(self, state: WorkflowState) -> WorkflowState:
+        """Synchronization point for parallel processes before asset gathering"""
+        try:
+            print("Step 7: Synchronizing parallel generation results")
+            
+            # Check what we have
+            summary = []
+            if state.images_generated:
+                summary.append(f"{len(state.images_generated)} images generated")
+            if state.voice_files:
+                summary.append(f"{len(state.voice_files)} voice files created")
+            if state.broll_assets:
+                broll_images = len(state.broll_assets.get('images', []))
+                broll_videos = len(state.broll_assets.get('videos', []))
+                summary.append(f"{broll_images} b-roll images and {broll_videos} videos found")
+            
+            return {
+                "messages": [AIMessage(content=f"Parallel generation complete: {', '.join(summary)}")]
+            }
+            
+        except Exception as e:
+            error_msg = f"Parallel sync failed: {str(e)}"
+            print(f"{error_msg}")
+            return {
+                "errors": [error_msg],
+                "messages": [AIMessage(content="Parallel synchronization failed")]
+            }
+    
+    async def broll_search_node(self, state: WorkflowState) -> WorkflowState:
+        """Search for b-roll content based on generated prompts (parallel node)"""
+        try:
+            print("Step 6d: Searching for b-roll content (parallel)")
+            
+            if not state.prompts_generated:
+                print("No prompts available, skipping b-roll search")
+                return {
+                    "broll_assets": {},
+                    "messages": [AIMessage(content="No prompts available, skipped b-roll search")]
+                }
+            
+            broll_tool = broll_search_tools[0]  # search_broll_from_prompts
+            
+            # Use the same prompts that were used for image generation
+            broll_result = await broll_tool.ainvoke({"prompts_data": state.prompts_generated})
+            
+            try:
+                broll_data = json.loads(broll_result)
+                print(f"Found {broll_data.get('metadata', {}).get('images_found', 0)} images and {broll_data.get('metadata', {}).get('videos_found', 0)} videos")
+                
+                return {
+                    "broll_assets": broll_data,
+                    "messages": [AIMessage(content=f"Found {len(broll_data.get('images', []))} b-roll images and {len(broll_data.get('videos', []))} videos")]
+                }
+            except json.JSONDecodeError:
+                print(f"Failed to parse b-roll results: {broll_result[:200]}...")
+                return {
+                    "broll_assets": {},
+                    "errors": ["Failed to parse b-roll search results"],
+                    "messages": [AIMessage(content="B-roll search failed to parse results")]
+                }
+                
+        except Exception as e:
+            error_msg = f"B-roll search failed: {str(e)}"
+            print(f"{error_msg}")
+            return {
+                "errors": [error_msg],
+                "broll_assets": {},
+                "messages": [AIMessage(content="B-roll search failed")]
+            }
+    
     async def voice_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate voiceover from script (parallel node)"""
         try:
@@ -519,7 +586,7 @@ class ProductionWorkflow:
     async def asset_gathering_node(self, state: WorkflowState) -> WorkflowState:
         """Organize generated assets in Google Drive project folder (sequential node)"""
         try:
-            print("Step 7: Gathering and organizing assets in Google Drive")
+            print("Step 8: Gathering and organizing assets in Google Drive")
             state.current_step = "asset_gathering"
             
             script_data = {
@@ -548,9 +615,19 @@ class ProductionWorkflow:
                         'images': state.images_generated,
                         'voice_files': state.voice_files,
                         'script_content': state.script_content,
-                        'prompts': state.prompts_generated
+                        'prompts': state.prompts_generated,
+                        'broll': state.broll_assets
                     }
                 })
+                
+                # Also organize b-roll metadata
+                if state.broll_assets:
+                    broll_organize_tool = broll_search_tools[1]  # organize_broll_assets
+                    broll_result = await broll_organize_tool.ainvoke({
+                        'broll_data': state.broll_assets,
+                        'project_folder_path': project_folder_path
+                    })
+                    print(f"B-roll organization: {broll_result[:200]}...")
             
             return {
                 "project_folder_path": project_folder_path,
@@ -571,7 +648,7 @@ class ProductionWorkflow:
     async def notion_integration_node(self, state: WorkflowState) -> WorkflowState:
         """Create Notion project and set up monitoring (sequential node)"""
         try:
-            print("Step 8: Setting up Notion project tracking")
+            print("Step 9: Setting up Notion project tracking")
             state.current_step = "notion_integration"
             
             notion_script_data = {
@@ -618,7 +695,7 @@ class ProductionWorkflow:
     async def finalize_node(self, state: WorkflowState) -> WorkflowState:
         """Finalize the workflow and compile results"""
         try:
-            print("Step 9: Finalizing workflow")
+            print("Step 10: Finalizing workflow")
             
             final_summary = f"""
 PRODUCTION WORKFLOW COMPLETED
@@ -647,6 +724,8 @@ Assets Generated:
 - Script content: Generated ({len(state.script_content)} chars)
 - Image prompts: {len(state.prompts_generated)} prompts
 - Generated images: {len(state.images_generated)} images
+- B-roll images: {len(state.broll_assets.get('images', []))} images
+- B-roll videos: {len(state.broll_assets.get('videos', []))} videos
 - Voice files: {len(state.voice_files)} files
 - Google Drive: Project folder created with organized structure
 - Notion workspace: Project tracking row created
@@ -656,6 +735,7 @@ Google Drive Structure:
   ├── generated_images/
   ├── voiceover/
   ├── scripts/
+  ├── broll/ (contains metadata.json with Pexels links)
   ├── final_draft/ (awaiting editor upload)
   └── resources/
 
