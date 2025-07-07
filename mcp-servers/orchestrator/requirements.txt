@@ -1,0 +1,17 @@
+# MCP Server Dependencies
+mcp==0.9.0
+
+# Async libraries
+aiofiles
+asyncio-mqtt
+
+# WebSocket support
+websockets
+
+# LangGraph and LangChain
+langgraph
+langchain-core
+langchain-community
+
+# Production workflow dependencies (inherited from main project)
+# Note: Install main project requirements.txt as well
