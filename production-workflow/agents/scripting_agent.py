@@ -79,6 +79,7 @@ async def generate_youtube_script(
         - Base the script ENTIRELY on the provided article content, using specific details, companies, or features mentioned.
         - Do NOT include metadata (e.g., timestamps, source links, or publication details) in the script.
         - Make the content feel personal, like you're explaining it to a friend excited about tech.
+        - Make sure that words do not coincide or merge together, ensuring proper spacing and punctuation throughout the script.
 
         CRITICAL SPACING REQUIREMENTS:
         - ALWAYS ensure proper spacing between all words

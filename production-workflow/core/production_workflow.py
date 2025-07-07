@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from typing import Dict, Any, List, Optional, Annotated
 from langgraph.graph import StateGraph, END
@@ -562,12 +563,31 @@ class ProductionWorkflow:
         
             voice_input = {
                 "script_text": clean_script[:1000],
-                "voice_name": "default",
+                "voice_name": "audio",  # Use the audio.wav sample for voice cloning
                 "emotion": "neutral"
             }
         
             voice_result = await voice_tool.ainvoke(voice_input)
-            voice_files = [voice_result] if voice_result else []
+            
+            # Extract file path from voice generation result
+            voice_files = []
+            if voice_result:
+                # Try to extract actual file path from the result
+                file_path = None
+                for line in voice_result.split('\n'):
+                    if "Local Path:" in line:
+                        file_path = line.split("Local Path:")[1].strip()
+                        # Remove markdown formatting
+                        file_path = file_path.lstrip('*').strip()
+                        break
+                
+                if file_path and os.path.exists(file_path):
+                    voice_files = [file_path]
+                    print(f"DEBUG: Extracted voice file path: {file_path}")
+                else:
+                    # Fallback: store the full result for parsing later
+                    voice_files = [voice_result]
+                    print(f"DEBUG: Voice file path not found, storing result for later parsing")
         
             return {
                 "voice_files": voice_files,

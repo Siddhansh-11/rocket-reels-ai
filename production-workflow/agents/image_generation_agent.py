@@ -17,8 +17,8 @@ load_dotenv()
 # Get Together AI API key
 TOGETHER_API_KEY = os.getenv("TogetherAI_API_KEY")
 
-# The free FLUX model that works with free tier
-FREE_FLUX_MODEL = "black-forest-labs/FLUX.1-schnell-Free"
+# The new FLUX.1.1-pro model
+FLUX_PRO_MODEL = "black-forest-labs/FLUX.1.1-pro"
 
 # Check if Together AI client is available
 try:
@@ -36,21 +36,24 @@ async def ensure_dir_exists(directory):
 async def generate_image_with_together(
     prompt: str, 
     output_path: Optional[str] = None,
-    width: int = 1024,
-    height: int = 576
+    width: int = 576,
+    height: int = 1024,
+    model: str = FLUX_PRO_MODEL
 ) -> Dict[str, Any]:
-    """Generate an image using Together AI's free FLUX model.
+    """Generate an image using Together AI's FLUX.1.1-pro model.
     
     Args:
         prompt (str): Text description of the image to generate
         output_path (str, optional): Path to save the image. If None, returns image details only.
-        width (int): Width of the generated image
-        height (int): Height of the generated image
+        width (int): Width of the generated image (default: 576 for 9:16 portrait)
+        height (int): Height of the generated image (default: 1024 for 9:16 portrait)
+        model (str): Model to use for generation
         
     Returns:
         dict: Response data containing image URL or base64 data and file path
     """
-    print(f"Generating image using Together AI ({FREE_FLUX_MODEL})...")
+    print(f"Generating image using Together AI ({model})...")
+    print(f"Dimensions: {width}x{height} (9:16 portrait for social media)")
     print(f"Prompt: {prompt}")
     
     try:
@@ -61,8 +64,7 @@ async def generate_image_with_together(
         
         response = client.images.generate(
             prompt=prompt,
-            model=FREE_FLUX_MODEL,
-            steps=3,
+            model=model,
             width=width,
             height=height,
             n=1
@@ -114,14 +116,14 @@ async def generate_image_with_together(
         return {"error": str(e)}
 
 @tool
-async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: int = 1024, height: int = 576) -> str:
+async def generate_image_flux(prompt: str, model: str = FLUX_PRO_MODEL, width: int = 576, height: int = 1024) -> str:
     """Generate an image using Together AI's FLUX API.
     
     Args:
         prompt: Detailed description of the image to generate
-        model: Model to use (default: free tier model)
-        width: Width of the generated image
-        height: Height of the generated image
+        model: Model to use (default: FLUX.1.1-pro)
+        width: Width of the generated image (default: 576 for 9:16 portrait)
+        height: Height of the generated image (default: 1024 for 9:16 portrait)
     
     Returns:
         JSON string with image details and file path
@@ -139,7 +141,8 @@ async def generate_image_flux(prompt: str, model: str = FREE_FLUX_MODEL, width: 
             prompt=prompt,
             output_path=str(output_path),
             width=width,
-            height=height
+            height=height,
+            model=model
         )
         
         if "error" in result:
@@ -207,7 +210,8 @@ async def generate_from_visual_timing(visual_timing: Union[Dict, str], output_di
                 
                 enhanced_prompt = (
                     f"Professional cinematic shot: {description}, "
-                    f"high quality, detailed, 16:9 aspect ratio, film still, professional lighting"
+                    f"high quality, detailed, 9:16 portrait aspect ratio, vertical composition, "
+                    f"social media optimized, film still, professional lighting"
                 )
                 
                 result = await generate_image_with_together(
@@ -273,14 +277,14 @@ async def check_image_generation_status() -> str:
             return json.dumps({
                 "status": "warning",
                 "message": "API connection works but no FLUX models available for your account",
-                "action": "Proceed with generate_image_flux anyway with model=black-forest-labs/FLUX.1-schnell-Free",
+                "action": "Proceed with generate_image_flux anyway with model=black-forest-labs/FLUX.1.1-pro",
                 "use_default_model": True
             })
         
         return json.dumps({
             "status": "available", 
             "service": "Together AI", 
-            "model": FREE_FLUX_MODEL,
+            "model": FLUX_PRO_MODEL,
             "available_models": available_models,
             "message": "Image generation is fully operational",
             "action": "Proceed with generate_image_flux directly"

@@ -267,16 +267,47 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
         # Move voice files
         if 'voice_files' in assets_data and assets_data['voice_files']:
             voice_moved = []
-            for voice_path in assets_data['voice_files']:
+            for voice_item in assets_data['voice_files']:
                 try:
-                    if os.path.exists(voice_path):
+                    voice_path = None
+                    
+                    # Extract file path from voice generation result
+                    if isinstance(voice_item, str):
+                        # Check if it's a direct file path
+                        if os.path.exists(voice_item):
+                            voice_path = voice_item
+                        else:
+                            # Parse from voice generation result text
+                            for line in voice_item.split('\n'):
+                                if "Local Path:" in line:
+                                    voice_path = line.split("Local Path:")[1].strip()
+                                    # Remove markdown formatting
+                                    voice_path = voice_path.lstrip('*').strip()
+                                    break
+                                elif "file_path" in line.lower() and ":" in line:
+                                    voice_path = line.split(":")[-1].strip()
+                                    # Remove markdown formatting
+                                    voice_path = voice_path.lstrip('*').strip()
+                                    break
+                    
+                    if voice_path and os.path.exists(voice_path):
                         voice_filename = os.path.basename(voice_path)
                         voice_file_metadata = {
                             'name': voice_filename,
                             'parents': [subfolders['voiceover']]
                         }
                         from googleapiclient.http import MediaFileUpload
-                        media = MediaFileUpload(voice_path, mimetype='audio/mp3')
+                        # Detect proper mimetype based on file extension
+                        if voice_path.lower().endswith('.wav'):
+                            mimetype = 'audio/wav'
+                        elif voice_path.lower().endswith('.mp3'):
+                            mimetype = 'audio/mp3'
+                        elif voice_path.lower().endswith('.m4a'):
+                            mimetype = 'audio/m4a'
+                        else:
+                            mimetype = 'audio/wav'  # Default
+                        
+                        media = MediaFileUpload(voice_path, mimetype=mimetype)
                         voice_file = service.files().create(body=voice_file_metadata, media_body=media).execute()
                         voice_moved.append(voice_file.get('id'))
                         print(f"Uploaded voice file: {voice_filename}")
@@ -285,7 +316,7 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
                     else:
                         print(f"Voice file not found: {voice_path}")
                 except Exception as e:
-                    print(f"Failed to upload voice file {voice_path}: {str(e)}")
+                    print(f"Failed to upload voice file {voice_item}: {str(e)}")
             
             organized_assets['voice_files'] = voice_moved
         

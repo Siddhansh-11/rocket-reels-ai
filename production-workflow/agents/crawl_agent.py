@@ -22,7 +22,7 @@ mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 async def enhanced_html_parsing(url: str) -> Dict:
     """Enhanced HTML parsing with site-specific selectors and better content extraction."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
@@ -88,6 +88,16 @@ async def enhanced_html_parsing(url: str) -> Dict:
                 '[data-module="ArticleBody"]',
                 '.ArticleBody-articleBody',
                 '.InlineText-container'
+            ]
+        elif 'salesforce.com' in domain:
+            content_selectors = [
+                '.press-release-content',
+                '.content-body',
+                '.article-body',
+                '.main-content',
+                '[data-component="content"]',
+                '.content-wrapper',
+                'main .content'
             ]
         else:
             # Generic selectors
@@ -240,7 +250,7 @@ Focus on the main article content only, ignore navigation, comments, ads, and si
                 key_points.append(line.replace('-', '').strip())
         
         # Validate that we got meaningful content
-        if not clean_content or len(clean_content) < 100:
+        if not clean_content or len(clean_content) < 50:
             raise Exception("Mistral extracted insufficient content")
         
         return {
@@ -261,7 +271,7 @@ Focus on the main article content only, ignore navigation, comments, ads, and si
 async def extract_media_urls_enhanced(url: str) -> Dict:
     """Enhanced media extraction with better filtering."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
@@ -340,7 +350,7 @@ async def crawl_article_content(url: str) -> str:
             article_data = await enhanced_html_parsing(url)
             
             # If we got good content, we're done
-            if article_data.get('content') and len(article_data['content']) > 200:
+            if article_data.get('content') and len(article_data['content']) > 100:
                 print(f"✅ Enhanced HTML parsing successful: {len(article_data['content'])} characters")
             else:
                 raise Exception("Insufficient content from enhanced parsing")
@@ -352,7 +362,7 @@ async def crawl_article_content(url: str) -> str:
             try:
                 print("🤖 Falling back to Mistral AI analysis...")
                 # Get raw content for Mistral
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                     response = await client.get(url, headers={'User-Agent': 'Mozilla/5.0'})
                     soup = BeautifulSoup(response.text, 'html.parser')
                     raw_content = soup.get_text(separator='\n', strip=True)
@@ -361,8 +371,18 @@ async def crawl_article_content(url: str) -> str:
                 
             except Exception as mistral_error:
                 print(f"⚠️ Mistral analysis also failed: {mistral_error}")
-                # Use the enhanced HTML result even if content is limited
-                article_data = await enhanced_html_parsing(url)
+                # Create minimal fallback article data
+                article_data = {
+                    "title": f"Crawled Article from {urlparse(url).netloc}",
+                    "content": f"Failed to extract content from {url}. This appears to be a press release or article from {urlparse(url).netloc}.",
+                    "summary": f"Content extraction failed for {url}",
+                    "key_points": ["Content could not be extracted due to website restrictions"],
+                    "category": "Technology",
+                    "word_count": 20,
+                    "character_count": 100,
+                    "domain": urlparse(url).netloc,
+                    "method": "fallback_minimal"
+                }
         
         # Combine article data with media data
         article_data['image_urls'] = [img['url'] for img in media_data['images']]
