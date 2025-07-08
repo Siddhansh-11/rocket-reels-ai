@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import tempfile
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from langchain_core.tools import tool
@@ -116,7 +117,8 @@ async def create_project_folder_structure(script_data: Dict[str, Any]) -> str:
             'voiceover': 'Generated voice files and audio assets', 
             'scripts': 'Script files and text content',
             'final_draft': 'Final video files (for editor upload)',
-            'resources': 'Additional resources and references'
+            'resources': 'Additional resources and references',
+            'broll': 'B-roll assets downloaded from Pexels'
         }
         
         created_folders = {}
@@ -224,7 +226,8 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
         subfolders = {
             'generated_images': _find_folder_by_name(service, 'generated_images', project_folder_id),
             'voiceover': _find_folder_by_name(service, 'voiceover', project_folder_id),
-            'scripts': _find_folder_by_name(service, 'scripts', project_folder_id)
+            'scripts': _find_folder_by_name(service, 'scripts', project_folder_id),
+            'broll': _find_folder_by_name(service, 'broll', project_folder_id)
         }
         
         missing_folders = [name for name, folder_id in subfolders.items() if not folder_id]
@@ -350,6 +353,92 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
                     except OSError as e:
                         print(f"Note: Could not delete temp file {temp_file_path}: {e}")
         
+        # Upload b-roll assets if available
+        print(f"DEBUG: Checking for B-roll assets in assets_data keys: {list(assets_data.keys())}")
+        if 'broll_assets' in assets_data and assets_data['broll_assets']:
+            broll_data = assets_data['broll_assets']
+            broll_uploaded = []
+            print(f"DEBUG: Found B-roll data, type: {type(broll_data)}")
+            if isinstance(broll_data, dict):
+                print(f"DEBUG: B-roll data keys: {list(broll_data.keys())}")
+            
+            # Handle downloaded files if they exist
+            if isinstance(broll_data, dict) and 'downloaded_files' in broll_data:
+                print(f"DEBUG: Found {len(broll_data['downloaded_files'])} downloaded B-roll files")
+                for broll_file in broll_data['downloaded_files']:
+                    try:
+                        file_path = broll_file.get('path')
+                        if file_path and os.path.exists(file_path):
+                            filename = os.path.basename(file_path)
+                            file_metadata = {
+                                'name': filename,
+                                'parents': [subfolders['broll']]
+                            }
+                            
+                            # Determine mimetype
+                            if broll_file.get('type') == 'video' or filename.endswith('.mp4'):
+                                mimetype = 'video/mp4'
+                            else:
+                                mimetype = 'image/jpeg'
+                            
+                            from googleapiclient.http import MediaFileUpload
+                            media = MediaFileUpload(file_path, mimetype=mimetype)
+                            uploaded_file = service.files().create(body=file_metadata, media_body=media).execute()
+                            broll_uploaded.append(uploaded_file.get('id'))
+                            print(f"Uploaded b-roll: {filename}")
+                            media = None
+                            time.sleep(0.5)
+                        else:
+                            print(f"B-roll file not found: {file_path}")
+                    except Exception as e:
+                        print(f"Failed to upload b-roll file: {str(e)}")
+                
+                organized_assets['broll'] = broll_uploaded
+                print(f"DEBUG: Uploaded {len(broll_uploaded)} B-roll files to Google Drive")
+            else:
+                print("DEBUG: No 'downloaded_files' found in B-roll data")
+            
+            # Also save b-roll metadata
+            if isinstance(broll_data, dict) and ('images' in broll_data or 'videos' in broll_data):
+                broll_metadata = {
+                    'generated_at': datetime.now().isoformat(),
+                    'total_assets': {
+                        'images': len(broll_data.get('images', [])),
+                        'videos': len(broll_data.get('videos', []))
+                    },
+                    'assets': {
+                        'images': broll_data.get('images', []),
+                        'videos': broll_data.get('videos', [])
+                    },
+                    'source': 'Pexels API'
+                }
+                
+                metadata_filename = f"broll_metadata_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+                temp_file_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                        json.dump(broll_metadata, temp_file, indent=2)
+                        temp_file_path = temp_file.name
+                    
+                    metadata_file = {
+                        'name': metadata_filename,
+                        'parents': [subfolders['broll']],
+                        'mimeType': 'application/json'
+                    }
+                    from googleapiclient.http import MediaFileUpload
+                    media = MediaFileUpload(temp_file_path, mimetype='application/json')
+                    service.files().create(body=metadata_file, media_body=media).execute()
+                    print(f"Uploaded b-roll metadata: {metadata_filename}")
+                    media = None
+                finally:
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        try:
+                            os.unlink(temp_file_path)
+                        except OSError:
+                            pass
+        else:
+            print("DEBUG: No B-roll assets found in assets_data")
+        
         return f"""ASSETS ORGANIZED
 
 Project: {project_folder_path}
@@ -358,11 +447,13 @@ Assets Organized:
 - Images: {len(organized_assets.get('images', []))} files -> generated_images/
 - Voice Files: {len(organized_assets.get('voice_files', []))} files -> voiceover/
 - Script: {'Created' if 'script_file' in organized_assets else 'Failed'} -> scripts/
+- B-roll: {len(organized_assets.get('broll', []))} files -> broll/
 
 Folder Structure Ready:
 - generated_images/
 - voiceover/
 - scripts/
+- broll/
 - final_draft/ (awaiting editor upload)
 - resources/
 
@@ -453,7 +544,7 @@ async def get_project_summary(project_folder_path: str) -> str:
         if not project_folder_id:
             return f"Project folder not found: {project_folder_path}"
         
-        subfolders = ['generated_images', 'voiceover', 'scripts', 'final_draft', 'resources']
+        subfolders = ['generated_images', 'voiceover', 'scripts', 'broll', 'final_draft', 'resources']
         folder_summary = {}
         
         for subfolder_name in subfolders:

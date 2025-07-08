@@ -507,7 +507,7 @@ class ProductionWorkflow:
                     "messages": [AIMessage(content="No prompts available, skipped b-roll search")]
                 }
             
-            broll_tool = broll_search_tools[0]  # search_broll_from_prompts
+            broll_tool = broll_search_tools[2]  # search_and_download_broll_tool
             
             # Use the same prompts that were used for image generation
             broll_result = await broll_tool.ainvoke({"prompts_data": state.prompts_generated})
@@ -636,7 +636,7 @@ class ProductionWorkflow:
                         'voice_files': state.voice_files,
                         'script_content': state.script_content,
                         'prompts': state.prompts_generated,
-                        'broll': state.broll_assets
+                        'broll_assets': state.broll_assets
                     }
                 })
                 
