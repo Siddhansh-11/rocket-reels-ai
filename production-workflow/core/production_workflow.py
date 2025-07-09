@@ -20,6 +20,7 @@ from agents.voice_generation_agent import voice_tools
 from agents.broll_search_agent import broll_search_tools
 from agents.asset_gathering_agent import asset_gathering_tools
 from agents.notion_agent import notion_tools
+from agents.visual_table_agent import visual_table_tools
 
 @dataclass
 class WorkflowState:
@@ -46,9 +47,15 @@ class WorkflowState:
     visual_suggestions: List[str] = field(default_factory=list)
     script_id: str = ""
     
+    # Shot analysis phase (new)
+    shot_breakdown: List[Dict[str, Any]] = field(default_factory=list)
+    shot_timing: List[Dict[str, Any]] = field(default_factory=list)
+    shot_types: List[str] = field(default_factory=list)
+    
     # Parallel generation phase (prompt, image, voice, broll)
     prompts_generated: Annotated[List[Dict], add] = field(default_factory=list)
     images_generated: Annotated[List[str], add] = field(default_factory=list)
+    image_prompt_mapping: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # Track which image came from which prompt
     voice_files: Annotated[List[str], add] = field(default_factory=list)
     broll_assets: Dict[str, Any] = field(default_factory=dict)
     
@@ -80,10 +87,12 @@ class ProductionWorkflow:
         self.workflow.add_node("store_article", self.store_article_node)
         self.workflow.add_node("generate_script", self.generate_script_node)
         self.workflow.add_node("store_script", self.store_script_node)
+        self.workflow.add_node("shot_analysis", self.shot_analysis_node)
         self.workflow.add_node("prompt_generation", self.prompt_generation_node)
         self.workflow.add_node("image_generation", self.image_generation_node)
         self.workflow.add_node("voice_generation", self.voice_generation_node)
         self.workflow.add_node("broll_search", self.broll_search_node)
+        self.workflow.add_node("visual_table_generation", self.visual_table_generation_node)
         self.workflow.add_node("asset_gathering", self.asset_gathering_node)
         self.workflow.add_node("notion_integration", self.notion_integration_node)
         self.workflow.add_node("finalize", self.finalize_node)
@@ -94,10 +103,11 @@ class ProductionWorkflow:
         self.workflow.add_edge("crawl", "store_article")
         self.workflow.add_edge("store_article", "generate_script")
         self.workflow.add_edge("generate_script", "store_script")
+        self.workflow.add_edge("store_script", "shot_analysis")
         
-        # After script storage: prompt generation and voice generation run in parallel
-        self.workflow.add_edge("store_script", "prompt_generation")
-        self.workflow.add_edge("store_script", "voice_generation")
+        # After shot analysis: shot-specific prompt generation and voice generation run in parallel
+        self.workflow.add_edge("shot_analysis", "prompt_generation")
+        self.workflow.add_edge("shot_analysis", "voice_generation")
         
         # Image generation and b-roll search follow prompt generation
         self.workflow.add_edge("prompt_generation", "image_generation")
@@ -111,8 +121,11 @@ class ProductionWorkflow:
         self.workflow.add_edge("voice_generation", "parallel_sync")
         self.workflow.add_edge("broll_search", "parallel_sync")
         
-        # Parallel sync leads to asset gathering
-        self.workflow.add_edge("parallel_sync", "asset_gathering")
+        # Parallel sync leads to visual table generation
+        self.workflow.add_edge("parallel_sync", "visual_table_generation")
+        
+        # Visual table generation leads to asset gathering
+        self.workflow.add_edge("visual_table_generation", "asset_gathering")
         
         # Asset gathering leads to Notion integration
         self.workflow.add_edge("asset_gathering", "notion_integration")
@@ -126,8 +139,41 @@ class ProductionWorkflow:
     async def prompt_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate prompts for image generation (parallel node)"""
         try:
-            print("Step 6a: Generating image prompts (parallel)")
+            print("Step 6a: Generating shot-specific image prompts (parallel)")
             
+            # Check if we have shot breakdown for shot-specific prompts
+            if state.shot_breakdown:
+                print(f"Using shot breakdown with {len(state.shot_breakdown)} shots for specific prompts")
+                
+                shot_prompt_tool = prompt_generation_tools[1]  # generate_shot_specific_prompts
+                prompts_result = await shot_prompt_tool.ainvoke({"shot_breakdown": state.shot_breakdown})
+                
+                print(f"DEBUG - Generated {len(prompts_result)} shot-specific prompts")
+                for i, prompt in enumerate(prompts_result[:3], 1):
+                    print(f"  Shot {prompt.get('shot_number', i)}: {prompt.get('visual_description', 'No description')[:50]}...")
+                
+                if prompts_result:
+                    # Convert to workflow format
+                    generated_prompts = [
+                        {
+                            "id": prompt["id"],
+                            "prompt": prompt["visual_description"],
+                            "shot_number": prompt.get("shot_number"),
+                            "type": prompt.get("shot_type", "scene"),
+                            "style": prompt.get("mood_style", "dynamic, engaging"),
+                            "timing": f"Shot {prompt.get('shot_number', 'Unknown')}"
+                        } for prompt in prompts_result
+                    ]
+                    
+                    print(f"Generated {len(generated_prompts)} shot-specific prompts for image generation")
+                    
+                    return {
+                        "prompts_generated": generated_prompts,
+                        "messages": [AIMessage(content=f"Generated {len(generated_prompts)} shot-specific LLM-powered image prompts")]
+                    }
+            
+            # Fallback to script-based prompts if no shot breakdown
+            print("No shot breakdown available, using script-based prompts")
             if not state.script_content:
                 print("No script content available for prompt generation")
                 return {
@@ -427,6 +473,65 @@ class ProductionWorkflow:
                 "messages": [AIMessage(content="Script storage failed")]
             }
     
+    async def shot_analysis_node(self, state: WorkflowState) -> WorkflowState:
+        """Analyze script and break it down into individual shots (sequential node)"""
+        try:
+            print("Step 5.5: Analyzing script for shot breakdown")
+            state.current_step = "shot_analysis"
+            
+            if not state.script_content:
+                print("No script content available for shot analysis")
+                return {
+                    "shot_breakdown": [],
+                    "shot_timing": [],
+                    "shot_types": [],
+                    "messages": [AIMessage(content="No script content available for shot analysis")]
+                }
+            
+            shot_analysis_tool = script_generation_tools[3]  # analyze_script_shots
+            analysis_result = await shot_analysis_tool.ainvoke({"script_content": state.script_content})
+            
+            print(f"DEBUG - Shot analysis result: {analysis_result}")
+            
+            if analysis_result and not analysis_result.get('error'):
+                shot_breakdown = analysis_result.get('shot_breakdown', [])
+                shot_timing = analysis_result.get('shot_timing', [])
+                shot_types = analysis_result.get('shot_types', [])
+                
+                print(f"Script analyzed into {len(shot_breakdown)} shots")
+                for i, shot in enumerate(shot_breakdown[:3], 1):
+                    print(f"  Shot {i}: {shot.get('text', 'N/A')[:50]}... ({shot.get('type', 'unknown')})")
+                
+                return {
+                    "shot_breakdown": shot_breakdown,
+                    "shot_timing": shot_timing, 
+                    "shot_types": shot_types,
+                    "current_step": "shot_analysis",
+                    "messages": [AIMessage(content=f"Script analyzed into {len(shot_breakdown)} shots")]
+                }
+            else:
+                error_msg = analysis_result.get('error', 'Unknown error in shot analysis')
+                print(f"Shot analysis failed: {error_msg}")
+                return {
+                    "shot_breakdown": [],
+                    "shot_timing": [],
+                    "shot_types": [],
+                    "errors": [error_msg],
+                    "messages": [AIMessage(content="Shot analysis failed")]
+                }
+                
+        except Exception as e:
+            error_msg = f"Shot analysis failed: {str(e)}"
+            print(f"{error_msg}")
+            return {
+                "current_step": "shot_analysis",
+                "errors": [error_msg],
+                "shot_breakdown": [],
+                "shot_timing": [],
+                "shot_types": [],
+                "messages": [AIMessage(content="Shot analysis failed")]
+            }
+    
     async def image_generation_node(self, state: WorkflowState) -> WorkflowState:
         """Generate images from prompts (parallel node)"""
         try:
@@ -436,18 +541,37 @@ class ProductionWorkflow:
                 print("No prompts available, skipping image generation")
                 return {
                     "images_generated": [],
+                    "image_prompt_mapping": {},
                     "messages": [AIMessage(content="No prompts available, skipped image generation")]
                 }
+            
+            # Intelligently select which shots need images based on visual importance
+            selected_prompts = self._select_shots_for_image_generation(
+                state.prompts_generated, 
+                state.shot_breakdown,
+                target_images=10  # Generate 10 images spread across the video timeline
+            )
             
             image_tool = image_generation_tools[0]  # generate_image_flux
             
             generated_images = []
-            for prompt_data in state.prompts_generated[:3]:  # Limit to 3 images
+            image_prompt_mapping = {}  # Track which image was generated from which prompt
+            
+            for prompt_data in selected_prompts:
                 try:
                     image_result = await image_tool.ainvoke({"prompt": prompt_data["prompt"]})
                     result_dict = json.loads(image_result)
                     if result_dict.get("status") == "success":
-                        generated_images.append(result_dict["file_path"])  # Store file path directly
+                        file_path = result_dict["file_path"]
+                        generated_images.append(file_path)
+                        # Create mapping from image file to the prompt data that generated it
+                        image_prompt_mapping[file_path] = {
+                            "shot_number": prompt_data.get("shot_number"),
+                            "prompt": prompt_data["prompt"],
+                            "shot_type": prompt_data.get("shot_type"),
+                            "original_text": prompt_data.get("original_text", "")
+                        }
+                        print(f"Generated image for shot {prompt_data.get('shot_number')}: {os.path.basename(file_path) if file_path else 'Unknown'}")
                     else:
                         print(f"Image generation failed for prompt: {prompt_data['prompt'][:50]}...")
                 except Exception as img_error:
@@ -455,6 +579,7 @@ class ProductionWorkflow:
             
             return {
                 "images_generated": generated_images,
+                "image_prompt_mapping": image_prompt_mapping,
                 "messages": [AIMessage(content=f"Generated {len(generated_images)} images")]
             }
             
@@ -464,6 +589,7 @@ class ProductionWorkflow:
             return {
                 "errors": [error_msg],
                 "images_generated": [],
+                "image_prompt_mapping": {},
                 "messages": [AIMessage(content="Image generation failed")]
             }
     
@@ -562,7 +688,7 @@ class ProductionWorkflow:
             clean_script = re.sub(r'\n\s*\n', '\n', clean_script).strip()
         
             voice_input = {
-                "script_text": clean_script[:1000],
+                "script_text": clean_script,  # Use full script content for 60-second video generation
                 "voice_name": "audio",  # Use the audio.wav sample for voice cloning
                 "emotion": "neutral"
             }
@@ -601,6 +727,76 @@ class ProductionWorkflow:
                 "errors": [error_msg],
                 "voice_files": [],
                 "messages": [AIMessage(content="Voice generation failed")]
+            }
+    
+    async def visual_table_generation_node(self, state: WorkflowState) -> WorkflowState:
+        """Generate comprehensive visual production table (sequential node)"""
+        try:
+            print("Step 7.5: Generating visual production table")
+            state.current_step = "visual_table_generation"
+            
+            # Check if we have all required data
+            if not state.shot_breakdown:
+                print("No shot breakdown available, skipping visual table generation")
+                return {
+                    "messages": [AIMessage(content="No shot breakdown available, skipped visual table generation")]
+                }
+            
+            # Get project folder path from temporary asset gathering
+            script_data = {
+                'title': state.article_data.get('title', state.topic),
+                'script_content': state.script_content,
+                'script_id': state.script_id,
+                'article_id': state.article_id
+            }
+            
+            # Create basic folder structure to get project path
+            folder_tool = asset_gathering_tools[0]  # create_project_folder_structure
+            folder_result = await folder_tool.ainvoke({"script_data": script_data})
+            
+            project_folder_path = ""
+            if "Folder Path:" in folder_result:
+                folder_path_line = [line for line in folder_result.split('\n') if "Folder Path:" in line][0]
+                project_folder_path = folder_path_line.split("Folder Path:")[1].strip()
+            
+            if not project_folder_path:
+                print("Could not determine project folder path")
+                return {
+                    "messages": [AIMessage(content="Could not determine project folder path for visual table")]
+                }
+            
+            # Generate visual production table
+            table_tool = visual_table_tools[0]  # create_visual_production_table
+            table_result = await table_tool.ainvoke({
+                "shot_breakdown": state.shot_breakdown,
+                "shot_timing": state.shot_timing,
+                "visual_prompts": state.prompts_generated,
+                "generated_images": state.images_generated,
+                "broll_assets": state.broll_assets,
+                "image_prompt_mapping": state.image_prompt_mapping
+            })
+            
+            print(f"Visual table generation result: {table_result[:200]}...")
+            
+            # Generate production summary
+            summary_tool = visual_table_tools[1]  # generate_production_summary
+            summary_result = await summary_tool.ainvoke({
+                "shot_breakdown": state.shot_breakdown,
+                "visual_prompts": state.prompts_generated,
+                "generated_images": state.images_generated,
+                "broll_assets": state.broll_assets
+            })
+            
+            return {
+                "messages": [AIMessage(content=f"Visual production table created with {len(state.shot_breakdown)} shots mapped to assets")]
+            }
+            
+        except Exception as e:
+            error_msg = f"Visual table generation failed: {str(e)}"
+            print(f"{error_msg}")
+            return {
+                "errors": [error_msg],
+                "messages": [AIMessage(content="Visual table generation failed")]
             }
     
     async def asset_gathering_node(self, state: WorkflowState) -> WorkflowState:
@@ -786,6 +982,87 @@ Workflow Complete - Ready for Editor!
                 "errors": [error_msg],
                 "messages": [AIMessage(content="Workflow finalization failed")]
             }
+    
+    def _select_shots_for_image_generation(self, prompts: List[Dict], shot_breakdown: List[Dict], target_images: int = 6) -> List[Dict]:
+        """
+        Intelligently select which shots should have images generated based on content analysis
+        
+        Args:
+            prompts: List of all generated prompts
+            shot_breakdown: List of shot information
+            target_images: Target number of images to generate
+            
+        Returns:
+            List of selected prompts for image generation
+        """
+        from langchain_community.chat_models import ChatLiteLLM
+        
+        # Use AI to analyze and score shots for visual importance
+        try:
+            model = ChatLiteLLM(
+                model="deepseek/deepseek-chat",
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                temperature=0.3
+            )
+            
+            # Prepare shot information for analysis
+            shot_info = []
+            for i, (prompt, shot) in enumerate(zip(prompts, shot_breakdown)):
+                shot_info.append({
+                    "index": i,
+                    "prompt": prompt,
+                    "shot": shot,
+                    "text": shot.get("text", ""),
+                    "type": shot.get("type", ""),
+                    "section": shot.get("section", "")
+                })
+            
+            analysis_prompt = f"""Analyze these {len(shot_info)} video shots and select exactly {target_images} shots that should have images generated.
+
+Consider these factors:
+1. Visual impact - shots that introduce key concepts or people
+2. Narrative importance - shots that mark major story transitions
+3. Emotional peaks - shots with strong emotional content
+4. Distribution - spread images throughout the video, not clustered
+5. Shot types - prioritize shots where visuals enhance understanding
+
+Shots:
+{json.dumps([{"index": s["index"], "text": s["text"][:100], "section": s["section"]} for s in shot_info], indent=2)}
+
+Return ONLY a JSON array of indices (0-based) for the {target_images} most important shots to visualize.
+Example: [0, 3, 7, 10, 13, 15]"""
+
+            response = model.invoke([{"role": "user", "content": analysis_prompt}])
+            
+            # Parse the response to get selected indices
+            try:
+                # Extract JSON array from response
+                import re
+                json_match = re.search(r'\[[\d,\s]+\]', response.content)
+                if json_match:
+                    selected_indices = json.loads(json_match.group())
+                    # Ensure we have the right number and valid indices
+                    selected_indices = [i for i in selected_indices if 0 <= i < len(prompts)][:target_images]
+                else:
+                    raise ValueError("No valid JSON array found")
+            except:
+                # Fallback: distribute evenly across the video
+                print("AI selection failed, using even distribution")
+                step = max(1, len(prompts) // target_images)
+                selected_indices = [i * step for i in range(target_images) if i * step < len(prompts)]
+            
+            # Return the selected prompts
+            selected_prompts = [prompts[i] for i in selected_indices]
+            print(f"Selected shots for image generation: {selected_indices}")
+            
+            return selected_prompts
+            
+        except Exception as e:
+            print(f"Error in intelligent shot selection: {str(e)}")
+            # Fallback: simple even distribution
+            step = max(1, len(prompts) // target_images)
+            selected_indices = [i * step for i in range(target_images) if i * step < len(prompts)]
+            return [prompts[i] for i in selected_indices]
     
     def compile(self):
         """Compile the workflow graph"""

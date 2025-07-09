@@ -51,19 +51,33 @@ async def search_broll_from_prompts(prompts_data: List[Dict[str, Any]]) -> str:
                 "videos": []
             })
         
-        # Search for b-roll content
+        # Search for b-roll content - LIMITED to 6 images + 6 videos max
         broll_results = {
             "images": [],
             "videos": [],
             "metadata": {
                 "total_prompts": len(prompts_data),
-                "source": "Pexels"
+                "source": "Pexels",
+                "max_images": 6,
+                "max_videos": 6
             }
         }
         
         headers = {"Authorization": PEXELS_API_KEY}
         
-        for prompt_info in prompts_data:
+        # Limit prompts to search - select up to 6 diverse prompts for better variety
+        prompts_to_search = prompts_data[:6] if len(prompts_data) <= 6 else prompts_data[::len(prompts_data)//6][:6]
+        
+        images_collected = 0
+        videos_collected = 0
+        max_images = 6
+        max_videos = 6
+        
+        for prompt_info in prompts_to_search:
+            # Stop if we've collected enough assets
+            if images_collected >= max_images and videos_collected >= max_videos:
+                break
+                
             prompt_text = prompt_info.get("prompt", "")
             prompt_id = prompt_info.get("id", "unknown")
             scene_type = prompt_info.get("type", "scene")
@@ -77,66 +91,76 @@ async def search_broll_from_prompts(prompts_data: List[Dict[str, Any]]) -> str:
             
             print(f"Searching b-roll for prompt {prompt_id}: '{search_query}'")
             
-            # Search for images
-            try:
-                img_response = requests.get(
-                    PEXELS_IMAGE_URL,
-                    headers=headers,
-                    params={"query": search_query, "per_page": 3}
-                )
-                img_response.raise_for_status()
-                img_data = img_response.json()
-                
-                for photo in img_data.get("photos", [])[:2]:
-                    broll_results["images"].append({
-                        "url": photo["src"]["large"],
-                        "thumbnail": photo["src"]["medium"],
-                        "photographer": photo.get("photographer", "Unknown"),
-                        "query": search_query,
-                        "prompt_id": prompt_id,
-                        "scene_type": scene_type,
-                        "timing": timing,
-                        "width": photo.get("width", 0),
-                        "height": photo.get("height", 0),
-                        "pexels_id": photo.get("id", ""),
-                        "alt": photo.get("alt", search_query),
-                        "original_prompt": prompt_text
-                    })
-            except Exception as e:
-                print(f"Error searching images for prompt {prompt_id}: {str(e)}")
-            
-            # Search for videos
-            try:
-                vid_response = requests.get(
-                    PEXELS_VIDEO_URL,
-                    headers=headers,
-                    params={"query": search_query, "per_page": 2}
-                )
-                vid_response.raise_for_status()
-                vid_data = vid_response.json()
-                
-                for video in vid_data.get("videos", [])[:1]:
-                    if video.get("video_files"):
-                        # Get HD quality video file
-                        video_file = next(
-                            (f for f in video["video_files"] if f.get("quality") == "hd"),
-                            video["video_files"][0]
-                        )
-                        broll_results["videos"].append({
-                            "url": video_file["link"],
-                            "width": video_file.get("width", 0),
-                            "height": video_file.get("height", 0),
-                            "duration": video.get("duration", 0),
+            # Search for images (only if we need more)
+            if images_collected < max_images:
+                try:
+                    img_response = requests.get(
+                        PEXELS_IMAGE_URL,
+                        headers=headers,
+                        params={"query": search_query, "per_page": 2}
+                    )
+                    img_response.raise_for_status()
+                    img_data = img_response.json()
+                    
+                    images_needed = max_images - images_collected
+                    for photo in img_data.get("photos", [])[:images_needed]:
+                        broll_results["images"].append({
+                            "url": photo["src"]["large"],
+                            "thumbnail": photo["src"]["medium"],
+                            "photographer": photo.get("photographer", "Unknown"),
                             "query": search_query,
                             "prompt_id": prompt_id,
                             "scene_type": scene_type,
                             "timing": timing,
-                            "pexels_id": video.get("id", ""),
-                            "user": video.get("user", {}).get("name", "Unknown"),
+                            "width": photo.get("width", 0),
+                            "height": photo.get("height", 0),
+                            "pexels_id": photo.get("id", ""),
+                            "alt": photo.get("alt", search_query),
                             "original_prompt": prompt_text
                         })
-            except Exception as e:
-                print(f"Error searching videos for prompt {prompt_id}: {str(e)}")
+                        images_collected += 1
+                        if images_collected >= max_images:
+                            break
+                except Exception as e:
+                    print(f"Error searching images for prompt {prompt_id}: {str(e)}")
+            
+            # Search for videos (only if we need more)
+            if videos_collected < max_videos:
+                try:
+                    vid_response = requests.get(
+                        PEXELS_VIDEO_URL,
+                        headers=headers,
+                        params={"query": search_query, "per_page": 2}
+                    )
+                    vid_response.raise_for_status()
+                    vid_data = vid_response.json()
+                    
+                    videos_needed = max_videos - videos_collected
+                    for video in vid_data.get("videos", [])[:videos_needed]:
+                        if video.get("video_files"):
+                            # Get HD quality video file
+                            video_file = next(
+                                (f for f in video["video_files"] if f.get("quality") == "hd"),
+                                video["video_files"][0]
+                            )
+                            broll_results["videos"].append({
+                                "url": video_file["link"],
+                                "width": video_file.get("width", 0),
+                                "height": video_file.get("height", 0),
+                                "duration": video.get("duration", 0),
+                                "query": search_query,
+                                "prompt_id": prompt_id,
+                                "scene_type": scene_type,
+                                "timing": timing,
+                                "pexels_id": video.get("id", ""),
+                                "user": video.get("user", {}).get("name", "Unknown"),
+                                "original_prompt": prompt_text
+                            })
+                            videos_collected += 1
+                            if videos_collected >= max_videos:
+                                break
+                except Exception as e:
+                    print(f"Error searching videos for prompt {prompt_id}: {str(e)}")
         
         # Add summary
         broll_results["metadata"]["images_found"] = len(broll_results["images"])
@@ -159,59 +183,78 @@ async def search_broll_from_prompts(prompts_data: List[Dict[str, Any]]) -> str:
 def _simplify_prompt_for_search(prompt_text: str) -> str:
     """
     Simplify a detailed image generation prompt into search keywords for Pexels.
+    Uses AI to extract the most relevant search terms without hardcoding.
     
     Args:
-        prompt_text: Full prompt text (e.g., "A futuristic AI robot working on a computer...")
+        prompt_text: Full prompt text 
     
     Returns:
         Simplified search query for Pexels
     """
-    # Remove style descriptors and technical terms
-    style_terms = [
-        "photorealistic", "cinematic", "4k", "8k", "ultra detailed", "high quality",
-        "professional", "dramatic lighting", "shallow depth of field", "bokeh",
-        "vibrant colors", "moody", "atmospheric", "studio lighting", "golden hour",
-        "blue hour", "high contrast", "soft lighting", "harsh lighting",
-        "wide angle", "close up", "medium shot", "establishing shot",
-        "rule of thirds", "symmetrical composition", "minimalist", "maximalist"
-    ]
-    
-    # Convert to lowercase for processing
-    search_text = prompt_text.lower()
-    
-    # Remove style terms
-    for term in style_terms:
-        search_text = search_text.replace(term.lower(), "")
-    
-    # Extract key subjects and actions
-    # Common patterns: "a/an [subject] [action]" or "[subject] [action]"
-    import re
-    
-    # Remove articles and clean up
-    search_text = re.sub(r'\b(a|an|the)\b', '', search_text)
-    search_text = re.sub(r'[,\.\!\?;:\'"()]', ' ', search_text)
-    search_text = re.sub(r'\s+', ' ', search_text).strip()
-    
-    # Extract first few meaningful words
-    words = search_text.split()
-    
-    # Filter out common filler words
-    filler_words = {
-        "with", "and", "or", "but", "in", "on", "at", "to", "for", "of",
-        "by", "from", "up", "down", "out", "over", "under", "again",
-        "further", "then", "once", "very", "really", "just", "quite"
-    }
-    
-    meaningful_words = [w for w in words if w not in filler_words and len(w) > 2]
-    
-    # Take first 3-5 meaningful words
-    search_query = " ".join(meaningful_words[:5])
-    
-    # If query is too short, use more words
-    if len(search_query) < 10 and len(meaningful_words) > 5:
-        search_query = " ".join(meaningful_words[:7])
-    
-    return search_query.strip()
+    try:
+        from langchain_community.chat_models import ChatLiteLLM
+        import os
+        
+        # Use AI to extract search keywords
+        model = ChatLiteLLM(
+            model="deepseek/deepseek-chat",
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            temperature=0.1
+        )
+        
+        system_prompt = """Extract 2-3 key search terms from this visual prompt that would help find relevant stock footage/images. 
+
+Rules:
+1. Focus on main subjects, objects, actions, or settings mentioned in the prompt
+2. Ignore style descriptions (lighting, format, quality, cinematic, etc.)
+3. Choose terms that would exist in stock media libraries
+4. Return only the search terms separated by spaces
+5. Keep it simple and searchable
+6. Prioritize specific objects, interfaces, and actions over generic terms
+
+Examples:
+- "AI chatbot interface displaying controversial messages with glowing red error alerts" → "chatbot interface error messages"
+- "Smartphone displaying messaging app interface with network visualization" → "smartphone messaging app network"
+- "Corporate spokesperson in modern office gesturing defensively" → "corporate spokesperson office meeting"
+- "Futuristic AI interface with friendly personality displayed on screen" → "AI interface screen display"
+- "Social media outrage with angry emoji reactions flooding screen" → "social media reactions screen"
+"""
+
+        user_prompt = f"Visual prompt: {prompt_text}\n\nExtract search terms:"
+        
+        response = model.invoke([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ])
+        
+        search_query = response.content.strip().lower()
+        
+        # Clean up the response
+        import re
+        search_query = re.sub(r'[^\w\s]', '', search_query)
+        search_query = re.sub(r'\s+', ' ', search_query).strip()
+        
+        # Limit to reasonable length
+        words = search_query.split()
+        if len(words) > 4:
+            search_query = " ".join(words[:4])
+        
+        return search_query if search_query else "business technology"
+        
+    except Exception as e:
+        print(f"AI search extraction failed: {e}, using fallback")
+        # Simple fallback without hardcoding
+        import re
+        
+        # Basic cleanup
+        search_text = prompt_text.lower()
+        search_text = re.sub(r'vertical.*?format', '', search_text)
+        search_text = re.sub(r'[^\w\s]', ' ', search_text)
+        search_text = re.sub(r'\s+', ' ', search_text).strip()
+        
+        # Take first meaningful words
+        words = [w for w in search_text.split() if len(w) > 3][:3]
+        return " ".join(words) if words else "business"
 
 @tool  
 async def organize_broll_assets(broll_data: Dict[str, Any], project_folder_path: str) -> str:
