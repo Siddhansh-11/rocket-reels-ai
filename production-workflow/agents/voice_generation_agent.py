@@ -105,13 +105,17 @@ class VoiceGenerationAgent:
             }
         
         try:
-            # Adjust parameters based on emotion
+            # Adjust parameters for 60-second video generation (slower, more natural pace)
+            # Higher cfg_weight = slower, more controlled speech for longer duration
+            cfg_weight = max(0.8, cfg_weight)  # Increase for slower speech
+            
+            # Adjust based on emotion while maintaining slower pace
             if emotion.lower() in ["dramatic", "excited", "expressive"]:
                 exaggeration = max(0.7, exaggeration)
-                cfg_weight = min(0.3, cfg_weight)
+                cfg_weight = max(0.7, cfg_weight)  # Still slower than original
             elif emotion.lower() in ["calm", "gentle", "soft"]:
                 exaggeration = min(0.3, exaggeration)
-                cfg_weight = max(0.7, cfg_weight)
+                cfg_weight = max(0.9, cfg_weight)  # Very slow and controlled
             
             # Get voice sample path if using custom voice
             audio_prompt_path = self._get_voice_sample_path(voice_name)
@@ -215,7 +219,7 @@ async def generate_voiceover(
                 "file_path": None
             })
         
-        # Limit text length for reasonable generation time
+        # Limit text length for reasonable generation time 
         if len(clean_text) > 5000:
             clean_text = clean_text[:5000] + "..."
             

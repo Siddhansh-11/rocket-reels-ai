@@ -46,10 +46,11 @@ async def generate_youtube_script(
         clean_title = clean_article_title(article_title)
         
         # Calculate target word count based on duration
+        # Using 2.5 words per second for natural speech pace
         if duration <= 30:
             target_words = 75
         elif duration <= 60:
-            target_words = 150
+            target_words = 225  # Increased from 150 to get 60s of audio
         elif duration <= 180:
             target_words = 450
         else:
@@ -408,9 +409,131 @@ Rewrite the script to be perfect for {target_platform}, maintaining the core inf
     except Exception as e:
         return f"Error optimizing script: {str(e)}"
 
+@tool
+async def analyze_script_shots(script_content: str) -> Dict[str, Any]:
+    """
+    Analyze script and break it down into individual shots with timing and metadata.
+    
+    Args:
+        script_content: The complete script content
+        
+    Returns:
+        Dictionary containing shot breakdown, timing, and types
+    """
+    try:
+        print("Analyzing script for shot breakdown...")
+        
+        # Parse script into sections first
+        sections = re.split(r'\[(\d+-\d+s: [^]]+)\]', script_content)
+        
+        shot_breakdown = []
+        shot_timing = []
+        shot_types = []
+        shot_number = 1
+        
+        current_time = 0
+        
+        for i in range(1, len(sections), 2):
+            if i + 1 < len(sections):
+                section_header = sections[i]
+                section_content = sections[i + 1].strip()
+                
+                # Extract timing from header
+                timing_match = re.search(r'(\d+)-(\d+)s', section_header)
+                if timing_match:
+                    start_time = int(timing_match.group(1))
+                    end_time = int(timing_match.group(2))
+                else:
+                    start_time = current_time
+                    end_time = current_time + 5
+                
+                # Split section content into individual shots (sentences)
+                sentences = re.split(r'[.!?]+', section_content)
+                sentences = [s.strip() for s in sentences if s.strip()]
+                
+                section_duration = end_time - start_time
+                shot_duration = section_duration / len(sentences) if sentences else section_duration
+                
+                for sentence in sentences:
+                    if len(sentence) > 10:  # Filter out very short fragments
+                        # Determine shot type based on content
+                        shot_type = determine_shot_type(sentence, section_header)
+                        
+                        shot_breakdown.append({
+                            "shot_number": shot_number,
+                            "text": sentence.strip(),
+                            "section": section_header,
+                            "type": shot_type
+                        })
+                        
+                        shot_timing.append({
+                            "shot_number": shot_number,
+                            "start_time": round(current_time, 1),
+                            "end_time": round(current_time + shot_duration, 1),
+                            "duration": round(shot_duration, 1)
+                        })
+                        
+                        shot_types.append(shot_type)
+                        
+                        shot_number += 1
+                        current_time += shot_duration
+        
+        print(f"Script analyzed into {len(shot_breakdown)} shots")
+        
+        return {
+            "shot_breakdown": shot_breakdown,
+            "shot_timing": shot_timing,
+            "shot_types": shot_types,
+            "total_shots": len(shot_breakdown),
+            "total_duration": round(current_time, 1)
+        }
+        
+    except Exception as e:
+        print(f"Error analyzing script shots: {str(e)}")
+        return {
+            "shot_breakdown": [],
+            "shot_timing": [],
+            "shot_types": [],
+            "total_shots": 0,
+            "total_duration": 0,
+            "error": str(e)
+        }
+
+def determine_shot_type(sentence: str, section_header: str) -> str:
+    """Determine the type of shot based on content and context"""
+    sentence_lower = sentence.lower()
+    
+    # Check for screen recording indicators
+    screen_indicators = [
+        "phone screen", "screen recording", "mockup", "headlines", "notifications",
+        "app", "website", "browser", "dashboard", "interface", "ui", "email"
+    ]
+    if any(indicator in sentence_lower for indicator in screen_indicators):
+        return "screen_recording"
+    
+    # Check for B-roll indicators  
+    broll_indicators = [
+        "dramatic", "scene", "background", "footage", "video", "clip",
+        "montage", "animation", "graphics", "overlay"
+    ]
+    if any(indicator in sentence_lower for indicator in broll_indicators):
+        return "broll"
+    
+    # Check for talking head with specific emotions/actions
+    emotion_indicators = [
+        "shocked", "surprised", "concerned", "excited", "pointing", "leaning",
+        "expression", "facial", "reaction", "looking", "nodding"
+    ]
+    if any(indicator in sentence_lower for indicator in emotion_indicators):
+        return "talking_head_emotional"
+    
+    # Default to talking head for most content
+    return "talking_head"
+
 # Export tools
 script_generation_tools = [
     generate_youtube_script,
     generate_script_variations,
-    optimize_script_for_platform
+    optimize_script_for_platform,
+    analyze_script_shots
 ]

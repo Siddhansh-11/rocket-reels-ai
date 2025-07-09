@@ -20,7 +20,8 @@ TOKEN_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'langgraph', 't
 
 def _sanitize_folder_name(name: str) -> str:
     """Sanitize folder name for Google Drive compatibility."""
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # Remove/replace problematic characters including apostrophes
+    sanitized = re.sub(r'[<>:"/\\|?*\']', '_', name)
     sanitized = re.sub(r'\s+', '_', sanitized)
     return sanitized[:100]
 
@@ -59,7 +60,9 @@ def _get_drive_service():
 def _find_folder_by_name(service, folder_name: str, parent_id: str = None) -> Optional[str]:
     """Find folder by name, optionally within a parent folder."""
     try:
-        query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        # Escape single quotes in folder name for Google Drive API query
+        escaped_folder_name = folder_name.replace("'", "\\'")
+        query = f"name='{escaped_folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
         if parent_id:
             query += f" and '{parent_id}' in parents"
         
@@ -353,6 +356,46 @@ async def organize_generated_assets(project_folder_path: str, assets_data: Dict[
                     except OSError as e:
                         print(f"Note: Could not delete temp file {temp_file_path}: {e}")
         
+        # Upload CSV files from local assets directory
+        assets_dir = os.path.join(os.path.dirname(__file__), '..', 'assets')
+        if os.path.exists(assets_dir):
+            csv_files = [f for f in os.listdir(assets_dir) if f.endswith('.csv')]
+            csv_uploaded = []
+            for csv_file in csv_files:
+                try:
+                    csv_path = os.path.join(assets_dir, csv_file)
+                    if os.path.exists(csv_path):
+                        from googleapiclient.http import MediaFileUpload
+                        # Visual production table goes to main project folder, others to scripts
+                        if 'visual_production_table' in csv_file:
+                            parent_folder = project_folder_id  # Main project folder
+                        else:
+                            parent_folder = subfolders['scripts']  # Scripts subfolder
+                        
+                        csv_file_metadata = {
+                            'name': csv_file,
+                            'parents': [parent_folder]
+                        }
+                        media = MediaFileUpload(csv_path, mimetype='text/csv')
+                        uploaded_file = service.files().create(body=csv_file_metadata, media_body=media).execute()
+                        csv_uploaded.append(uploaded_file.get('id'))
+                        print(f"Uploaded CSV: {csv_file} to {'project folder' if 'visual_production_table' in csv_file else 'scripts folder'}")
+                        media = None
+                        time.sleep(0.5)
+                        
+                        # Delete the local CSV file after successful upload
+                        try:
+                            os.unlink(csv_path)
+                            print(f"Deleted local CSV file: {csv_file}")
+                        except OSError as e:
+                            print(f"Note: Could not delete CSV file {csv_file}: {e}")
+                    else:
+                        print(f"CSV file not found: {csv_path}")
+                except Exception as e:
+                    print(f"Failed to upload CSV file {csv_file}: {str(e)}")
+            
+            organized_assets['csv_files'] = csv_uploaded
+
         # Upload b-roll assets if available
         print(f"DEBUG: Checking for B-roll assets in assets_data keys: {list(assets_data.keys())}")
         if 'broll_assets' in assets_data and assets_data['broll_assets']:
@@ -447,6 +490,7 @@ Assets Organized:
 - Images: {len(organized_assets.get('images', []))} files -> generated_images/
 - Voice Files: {len(organized_assets.get('voice_files', []))} files -> voiceover/
 - Script: {'Created' if 'script_file' in organized_assets else 'Failed'} -> scripts/
+- CSV Files: {len(organized_assets.get('csv_files', []))} files -> scripts/
 - B-roll: {len(organized_assets.get('broll', []))} files -> broll/
 
 Folder Structure Ready:
