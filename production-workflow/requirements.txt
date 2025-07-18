@@ -1,0 +1,80 @@
+# Core Workflow Dependencies
+langgraph
+langchain
+langchain-core
+langchain-community
+langchain-anthropic
+
+# State Management & Async
+pydantic
+#asyncio-compat
+dataclasses-json
+
+# Database & Storage
+supabase
+httpx
+
+# Environment & Configuration
+python-dotenv
+python-decouple
+
+# Web Scraping & Content
+beautifulsoup4
+requests
+html2text
+newspaper3k
+
+# AI & ML APIs
+anthropic
+mistralai
+openai
+together
+
+# Search & Research
+tavily-python
+duckduckgo-search
+
+# Google Services
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+google-auth
+
+# Notion Integration
+notion-client
+
+# Image & Media Processing
+Pillow
+requests-toolbelt
+
+# Voice & Audio (Optional)
+elevenlabs
+pydub
+
+# Utilities
+colorama
+tqdm
+rich
+
+# Development & Testing
+pytest
+pytest-asyncio
+black
+flake8
+
+# Date & Time
+python-dateutil
+
+# JSON & Data
+ujson
+orjson
+
+# Concurrent Processing
+aiofiles
+aiohttp
+
+# Monitoring & Logging
+structlog
+
+# Type Hints & Validation
+typing-extensions

@@ -1,0 +1,7 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "news_research_agent": "./agent1.py:agent"
+    },
+    "env": "../.env"
+}

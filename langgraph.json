@@ -1,0 +1,11 @@
+{
+  "python_version": "3.11",
+  "dependencies": ["."],
+  "graphs": {
+    "rocket_reels": "orchestrator.langraph_workflow:app"
+  },
+  "env": ".env",
+  "env_vars": {
+    "BG_JOB_ISOLATED_LOOPS": "true"
+  }
+}

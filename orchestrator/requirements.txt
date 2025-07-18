@@ -1,6 +1,8 @@
 langgraph
 langchain
+langchain-core
 langchain-anthropic
+langchain-community
 mcp
 pydantic
 fastapi
@@ -10,3 +12,11 @@ aiofiles
 supabase
 python-dotenv
 langgraph-checkpoint
+tavily-python
+requests
+beautifulsoup4
+mistralai
+pillow
+httpx
+litellm
+together

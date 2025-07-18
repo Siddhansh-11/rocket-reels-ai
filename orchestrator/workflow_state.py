@@ -2,6 +2,7 @@ from typing import Dict, Any, List, Optional, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
+from langchain_core.messages import BaseMessage
 
 class ReviewStatus(str, Enum):
     PENDING = "pending"
@@ -26,9 +27,9 @@ class HumanReview(BaseModel):
 
 class PhaseOutput(BaseModel):
     """Output from a single phase"""
-    phase_name: str
-    data: Dict[str, Any]
-    status: PhaseStatus
+    phase_name: str = ""
+    data: Dict[str, Any] = Field(default_factory=dict)
+    status: PhaseStatus = PhaseStatus.NOT_STARTED
     error: Optional[str] = None
     duration_seconds: Optional[float] = None
     cost_usd: Optional[float] = None
@@ -36,14 +37,17 @@ class PhaseOutput(BaseModel):
 
 class ContentState(BaseModel):
     """Main workflow state for content generation"""
+    # Chat messages for LangGraph
+    messages: List[BaseMessage] = Field(default_factory=list)
+    
     # Workflow metadata
-    workflow_id: str
+    workflow_id: str = Field(default_factory=lambda: f"workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     
     # Input
-    input_type: Literal["youtube", "file", "prompt"]
-    input_data: Dict[str, Any]
+    input_type: Literal["youtube", "file", "prompt"] = "prompt"
+    input_data: Dict[str, Any] = Field(default_factory=dict)
     
     # Phase tracking
     current_phase: str = "input_processing"
@@ -51,6 +55,9 @@ class ContentState(BaseModel):
     
     # Phase outputs
     input_processing: Optional[PhaseOutput] = None
+    search: Optional[PhaseOutput] = None  # For search agent
+    crawl_and_store: Optional[PhaseOutput] = None  # For crawl and storage agent
+    search_content_ideas: Optional[PhaseOutput] = None
     research: Optional[PhaseOutput] = None
     planning: Optional[PhaseOutput] = None
     script_writing: Optional[PhaseOutput] = None
