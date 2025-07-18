@@ -1,7 +1,0 @@
-mcp
-yt-dlp
-pypdf2
-python-docx
-pillow
-aiofiles
-pydantic

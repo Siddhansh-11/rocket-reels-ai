@@ -1,5 +1,0 @@
-mcp
-anthropic
-pydantic
-textstat
-nltk
